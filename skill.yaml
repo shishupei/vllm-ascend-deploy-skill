@@ -1,0 +1,11 @@
+name: vllm-deploy
+description: 自动从 vLLM-Ascend 文档提取部署脚本，根据环境自动修改参数，生成一键执行的部署脚本
+version: 0.1.0
+author: shishupei
+triggers:
+  - /vllm-deploy
+tags:
+  - vllm
+  - ascend
+  - deployment
+  - npu
