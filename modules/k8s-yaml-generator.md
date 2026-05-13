@@ -46,6 +46,12 @@
 | k8s-service.yaml | `${NAMESPACE}`、`${SERVICE_PORT}` |
 | apply-all.sh | `${NAMESPACE}` |
 
+## 错误处理
+
+此模块为纯文本生成模块，不涉及技术性操作，无特殊错误场景。
+
+生成的 YAML 文件语法错误时，提示用户手动修正。
+
 ## 用户确认
 
 展示生成的文件列表和内容摘要后，询问用户是否手动执行 `apply-all.sh`。
