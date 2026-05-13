@@ -1,3 +1,8 @@
+---
+name: vllm-deploy
+description: Use when deploying vLLM models on K8s with Ascend NPU. Automates model selection, doc parsing, K8s env detection, image handling, and generates deployment YAML files.
+---
+
 # vLLM-Deploy Skill
 
 从 vLLM-Ascend 文档自动提取部署脚本，根据 K8s 环境自动修改参数，生成一键执行的 K8s YAML。
@@ -13,5 +18,3 @@ K8s 管理节点（需有 kubectl 和集群管理权限）
 ## 开始部署
 
 请确认你当前在 K8s 管理节点，且有 kubectl 和集群管理权限。
-
-确认后，我将调用 `modules/model-list-fetcher.md` 开始获取模型列表。
