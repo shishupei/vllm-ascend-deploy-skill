@@ -210,6 +210,8 @@
 
 ## Phase 8：用户执行 K8s Apply
 
+**模块：** `modules/k8s-apply-guide.md`
+
 **用户操作：** 执行生成的 K8s YAML
 
 ```bash
@@ -265,6 +267,8 @@ bash apply-all.sh
 ---
 
 ## Phase 11：用户确认并执行部署脚本
+
+**模块：** `modules/deploy-execution-guide.md`
 
 **用户操作：**
 
@@ -338,8 +342,10 @@ vllm-skill/
 │   ├── image-handler.md             # 镜像处理模块
 │   ├── config-guide.md              # 交互配置模块
 │   ├── k8s-yaml-generator.md        # K8s YAML 生成
+│   ├── k8s-apply-guide.md           # Phase 8 用户操作指南
 │   ├── container-env-detector.md    # 容器内环境探测模块
 │   ├── deploy-generator.md          # 部署脚本生成模块
+│   ├── deploy-execution-guide.md    # Phase 11 用户操作指南
 │   └── output-guide.md              # 输出交付模块
 ├── scripts/
 │   ├── fetch-model-list.sh          # 抓取模型列表脚本

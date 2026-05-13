@@ -44,7 +44,7 @@
 | k8s-configmap.yaml | `${NAMESPACE}`、`${MODEL_PATH}`、`${MAX_MODEL_LEN}`、`${MAX_NUM_SEQS}`、`${TENSOR_PARALLEL_SIZE}` |
 | k8s-deployment.yaml | `${NODE_NAME}`、`${NAMESPACE}`、`${IMAGE}`、`${NPU_RESOURCE_TYPE}`、`${NPU_COUNT}`、`${MODEL_MOUNT_PATH}`、`${MODEL_PATH_HOST}` |
 | k8s-service.yaml | `${NAMESPACE}`、`${SERVICE_PORT}` |
-| apply-all.sh | `${NAMESPACE}` |
+| apply-all.sh | `${NAMESPACE}`、`${DEPLOYMENT}`（DEPLOYMENT 为动态生成的 deployment 文件名列表） |
 
 ## 错误处理
 
