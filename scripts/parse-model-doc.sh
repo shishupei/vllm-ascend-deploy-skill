@@ -40,8 +40,9 @@ HTML=$(curl -s "$FULL_URL" 2>&1) || {
     exit 1
 }
 
-# 提取镜像版本（查找 quay.io/vllm-ascend/vllm-ascend:xxx）
-IMAGE_VERSION=$(echo "$HTML" | grep -oP 'quay\.io\/vllm-ascend\/vllm-ascend:v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+# 提取镜像版本（匹配 quay.io/ascend/vllm-ascend:vxxx 格式）
+# 版本号格式支持：v0.18.0rc1-a3, v0.18.0rc1, v0.9.0 等
+IMAGE_VERSION=$(echo "$HTML" | grep -oP 'quay\.io\/ascend\/vllm-ascend:v[0-9]+\.[0-9]+\.[0-9]+[a-z0-9-]*' | head -1)
 
 # 提取脚本块（根据硬件规格和部署方式定位）
 # 简化处理：查找 code block 并根据标题匹配
