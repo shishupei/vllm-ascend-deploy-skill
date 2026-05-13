@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-${NODE_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    node: ${NODE_NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-deploy
+      node: ${NODE_NAME}
+  template:
+    metadata:
+      labels:
+        app: vllm-deploy
+        node: ${NODE_NAME}
+    spec:
+      nodeName: ${NODE_NAME}
+      containers:
+      - name: vllm
+        image: ${IMAGE}
+        resources:
+          limits:
+            ${NPU_RESOURCE_TYPE}: ${NPU_COUNT}
+          requests:
+            ${NPU_RESOURCE_TYPE}: ${NPU_COUNT}
+        volumeMounts:
+        - name: model-storage
+          mountPath: ${MODEL_MOUNT_PATH}
+        env:
+        - name: MODEL_PATH
+          valueFrom:
+            configMapKeyRef:
+              name: vllm-config
+              key: MODEL_PATH
+        - name: MAX_MODEL_LEN
+          valueFrom:
+            configMapKeyRef:
+              name: vllm-config
+              key: MAX_MODEL_LEN
+        - name: MAX_NUM_SEQS
+          valueFrom:
+            configMapKeyRef:
+              name: vllm-config
+              key: MAX_NUM_SEQS
+        - name: TENSOR_PARALLEL_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: vllm-config
+              key: TENSOR_PARALLEL_SIZE
+      volumes:
+      - name: model-storage
+        hostPath:
+          path: ${MODEL_PATH_HOST}
+          type: Directory
