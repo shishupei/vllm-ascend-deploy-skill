@@ -11,10 +11,10 @@
 
 ## 处理步骤
 
-1. 调用 `scripts/fetch-model-list.sh` 抓取模型列表页
+1. **自动执行** `scripts/fetch-model-list.sh` 抓取模型列表页
 2. 解析 HTML，提取模型名称和对应的文档链接
 3. 展示模型列表供用户选择
-4. 等待用户确认继续
+4. **Phase 1 完成**，等待用户确认进入 Phase 2
 
 ## 输出
 

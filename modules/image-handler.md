@@ -20,12 +20,12 @@ SSH 远程执行（需要在有 Docker 环境的节点）
 2. 通过 AskUserQuestion 选择有 Docker 环境的远程节点
 3. 通过 AskUserQuestion 输入 SSH 登录用户名
 4. 通过 AskUserQuestion 输入镜像仓库用户名和密码
-5. 调用 `scripts/push-image.sh` SSH 远程执行：
+5. **自动执行** `scripts/push-image.sh` SSH 远程执行：
    - 登录目标镜像仓库
    - 拉取官方镜像
    - 重新打标签为用户仓库地址
    - 推送镜像到用户仓库
-6. 等待用户确认推送结果
+6. **Phase 5 完成**，等待用户确认进入 Phase 6
 
 ## 输出
 

@@ -14,16 +14,14 @@ K8s 管理节点（需要 kubectl 和集群管理权限）
 
 ## 处理步骤
 
-1. 检查 `kubectl` 是否可用
-2. 检查 K8s 集群连接状态
-3. 获取集群节点列表（`kubectl get nodes`）
-4. 获取各节点 IP 地址（`kubectl get nodes -o wide`）
-5. 探测各节点 NPU 设备数量：
-   - 通过节点标签（`kubectl get nodes --show-labels`，查找 `ascend-npu` 相关标签）
-   - 通过资源容量（`kubectl describe node <name>`，查看 `davinci` 资源）
-6. 判断硬件规格：A3（16卡）或 A2（8卡）
-7. 根据用户选择的部署模式推荐使用的节点
-8. 等待用户确认探测结果
+1. **自动执行** `scripts/detect-k8s-env.sh` 探测：
+   - 检查 `kubectl` 是否可用
+   - 检查 K8s 集群连接状态
+   - 获取集群节点列表
+   - 获取各节点 IP 地址和 NPU 数量
+   - 判断硬件规格（A3/A2）
+2. 根据用户选择的部署模式推荐使用的节点
+3. **Phase 4 完成**，等待用户确认进入 Phase 5
 
 ## 输出
 

@@ -17,10 +17,10 @@
 
 1. 获取 Pod 状态（`kubectl get pods -n <namespace>`）
 2. 确认 Pod 状态为 Running
-3. 进入 Pod 探测 NPU 设备映射情况
+3. **自动执行** `scripts/detect-container-npu.sh` 进入 Pod 探测 NPU 设备映射情况
 4. 验证 NPU 设备是否正确挂载
 5. 确定容器内实际可用的硬件规格
-6. 等待用户确认探测结果
+6. **Phase 9 完成**，等待用户确认进入 Phase 10
 
 ## 输出
 
