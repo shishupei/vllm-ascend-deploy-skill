@@ -25,6 +25,7 @@ MODELS=$(echo "$HTML" | grep -oP '<a class="reference internal" href="[^"]+\.htm
     grep -v '\.\./' | \
     grep -v 'features/' | \
     grep -v 'hardwares/' | \
+    sort -u | \
     sed -n 's/.*href="\([^"]*\)">\([^<]*\)<.*/{"name": "\2", "url": "\1"},/p' | \
     sed '$ s/,$//')
 
