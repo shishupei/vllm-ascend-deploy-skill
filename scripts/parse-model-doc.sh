@@ -3,6 +3,17 @@
 # 解析指定模型的文档页面，提取脚本内容和镜像版本
 # 输出格式：JSON
 
+# JSON 字符串转义函数
+json_escape() {
+    local str="$1"
+    # 处理转义顺序很重要：先处理反斜杠
+    str=$(echo "$str" | sed 's/\\/\\\\/g')   # 反斜杠 -> \\
+    str=$(echo "$str" | sed 's/"/\\"/g')     # 双引号 -> \"
+    str=$(echo "$str" | sed 's/\t/\\t/g')    # 制表符 -> \t
+    str=$(echo "$str" | sed ':a;N;$!ba;s/\n/\\n/g')  # 换行 -> \n
+    echo -n "$str"
+}
+
 MODEL_URL="$1"
 HW_SPEC="$2"      # A3 或 A2
 DEPLOY_MODE="$3"  # single_node, multi_node, pd_disagg
@@ -34,11 +45,15 @@ if ! command -v curl &> /dev/null; then
     exit 1
 fi
 
-# 抓取页面
-HTML=$(curl -s "$FULL_URL" 2>&1) || {
-    echo '{"error": "Failed to fetch URL: ' "$FULL_URL" '"}'
+# 抓取页面（改进错误处理）
+HTML=$(curl -sf "$FULL_URL") || {
+    echo "{\"error\": \"Failed to fetch URL: $FULL_URL\"}"
     exit 1
 }
+if [ -z "$HTML" ]; then
+    echo '{"error": "Empty response from URL"}'
+    exit 1
+fi
 
 # 提取镜像版本（匹配 quay.io/ascend/vllm-ascend:vxxx 格式）
 # 版本号格式支持：v0.18.0rc1-a3, v0.18.0rc1, v0.9.0 等
@@ -107,9 +122,12 @@ fi
 # 清理脚本块中的多余空白，但保留结构
 SCRIPT_BLOCK=$(echo "$SCRIPT_BLOCK" | sed 's/\\n$//' | sed '/^$/d' | head -20)
 
-# 输出 JSON
+# 输出 JSON（使用转义函数）
+IMAGE_VERSION_ESCAPED=$(json_escape "$IMAGE_VERSION")
+SCRIPT_BLOCK_ESCAPED=$(json_escape "$SCRIPT_BLOCK")
+
 echo '{'
-echo '"image_version": "' "$IMAGE_VERSION" '",'
-echo '"script_content": "' "$SCRIPT_BLOCK" '",'
+echo "\"image_version\": \"$IMAGE_VERSION_ESCAPED\","
+echo "\"script_content\": \"$SCRIPT_BLOCK_ESCAPED\","
 echo '"parameters": {}'
 echo '}'
