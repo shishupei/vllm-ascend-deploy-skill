@@ -3,8 +3,6 @@
 # 探测 K8s 集群节点信息、NPU 数量、硬件规格
 # 输出格式：JSON
 
-set -e
-
 # 检查 kubectl 是否可用
 if ! command -v kubectl &> /dev/null; then
     echo '{"error": "kubectl not available", "kubectl_available": false}'
@@ -35,6 +33,11 @@ for NODE in $NODES; do
     if [ "$NPU_COUNT" == "0" ] || [ -z "$NPU_COUNT" ]; then
         # 尝试另一种资源名称
         NPU_COUNT=$(kubectl get node "$NODE" -o jsonpath='{.status.capacity.huawei\.com/Ascend910}' 2>/dev/null || echo "0")
+    fi
+
+    # 验证 NPU_COUNT 是否为数字
+    if ! [[ "$NPU_COUNT" =~ ^[0-9]+$ ]]; then
+        NPU_COUNT=0
     fi
 
     # 判断硬件规格

@@ -10,6 +10,8 @@ spec:
   ports:
   - port: 8000
     targetPort: 8000
+    # NodePort 端口范围：30000-32767
+    # 请确保 ${SERVICE_PORT} 在此范围内
     nodePort: ${SERVICE_PORT}
     protocol: TCP
     name: vllm-api
