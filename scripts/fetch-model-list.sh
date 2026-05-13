@@ -18,10 +18,14 @@ HTML=$(curl -s "$URL" 2>&1) || {
     exit 1
 }
 
-# 提取模型名称和链接（简化处理，实际需要根据页面结构调整）
-# 假设模型链接格式为 <a href="ModelName.html">ModelName</a>
-MODELS=$(echo "$HTML" | grep -oP '<a href="[^"]+\.html"[^>]*>[^<]+</a>' | \
-    sed -n 's/<a href="\([^"]+\)"[^>]*>\([^<]+\)<\/a>/{"name": "\2", "url": "\1"},/p' | \
+# 提取模型名称和链接
+# 匹配 class="reference internal" 的链接
+# 过滤掉 ../ 导航链接、features/ 和 hardwares/ 子目录链接
+MODELS=$(echo "$HTML" | grep -oP '<a class="reference internal" href="[^"]+\.html">[^<]+</a>' | \
+    grep -v '\.\./' | \
+    grep -v 'features/' | \
+    grep -v 'hardwares/' | \
+    sed -n 's/.*href="\([^"]*\)">\([^<]*\)<.*/{"name": "\2", "url": "\1"},/p' | \
     sed '$ s/,$//')
 
 # 输出 JSON
