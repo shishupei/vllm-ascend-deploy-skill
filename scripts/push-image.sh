@@ -32,9 +32,9 @@ else
     SSH_CMD="ssh ${REMOTE_NODE_IP}"
 fi
 
-# 1. 登录镜像仓库（使用 --password-stdin，用户名通过环境变量避免命令行暴露）
+# 1. 登录镜像仓库（使用 --password-stdin，用户名和密码通过环境变量避免命令行暴露）
 if [ -n "$DOCKER_USERNAME" ] && [ -n "$DOCKER_PASSWORD" ]; then
-    LOGIN_RESULT=$($SSH_CMD "echo '${DOCKER_PASSWORD}' | docker login -u '${DOCKER_USERNAME}' --password-stdin ${TARGET_REGISTRY}" 2>&1) || {
+    LOGIN_RESULT=$($SSH_CMD "DOCKER_USER='${DOCKER_USERNAME}' DOCKER_PASS='${DOCKER_PASSWORD}' bash -c 'echo \"\$DOCKER_PASS\" | docker login -u \"\$DOCKER_USER\" --password-stdin ${TARGET_REGISTRY}'" 2>&1) || {
         echo '{"error": "Docker login failed", "login_output": "'"${LOGIN_RESULT}"'"}'
         exit 1
     }
