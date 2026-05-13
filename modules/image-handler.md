@@ -18,13 +18,14 @@ SSH 远程执行（需要在有 Docker 环境的节点）
 
 1. 通过 AskUserQuestion 确认/修改目标镜像地址
 2. 通过 AskUserQuestion 选择有 Docker 环境的远程节点
-3. 通过 AskUserQuestion 输入镜像仓库用户名和密码
-4. 调用 `scripts/push-image.sh` SSH 远程执行：
+3. 通过 AskUserQuestion 输入 SSH 登录用户名
+4. 通过 AskUserQuestion 输入镜像仓库用户名和密码
+5. 调用 `scripts/push-image.sh` SSH 远程执行：
    - 登录目标镜像仓库
    - 拉取官方镜像
    - 重新打标签为用户仓库地址
    - 推送镜像到用户仓库
-5. 等待用户确认推送结果
+6. 等待用户确认推送结果
 
 ## 输出
 
@@ -39,8 +40,16 @@ SSH 远程执行（需要在有 Docker 环境的节点）
 ## 调用脚本
 
 ```bash
-scripts/push-image.sh <source_image> <target_registry> <remote_node_ip> <username> <password>
+scripts/push-image.sh <source_image> <target_registry> <remote_node_ip> <ssh_user> <docker_username> <docker_password>
 ```
+
+**参数说明：**
+- `source_image`: 源镜像地址（如 quay.io/ascend/vllm-ascend:v0.18.0rc1）
+- `target_registry`: 目标镜像仓库地址
+- `remote_node_ip`: 远程节点 IP
+- `ssh_user`: SSH 登录用户名（可选，默认使用当前用户）
+- `docker_username`: Docker 仓库用户名
+- `docker_password`: Docker 仓库密码
 
 ## 交互工具
 
@@ -74,7 +83,18 @@ scripts/push-image.sh <source_image> <target_registry> <remote_node_ip> <usernam
 }
 ```
 
-### Q3: 输入账密
+### Q3: 输入 SSH 用户
+
+```json
+{
+  "question": "请输入 SSH 登录用户名（留空使用当前用户）",
+  "header": "SSH 用户",
+  "options": [],
+  "multiSelect": false
+}
+```
+
+### Q4: 输入账密
 
 ```json
 {
