@@ -17,18 +17,18 @@ Use this skill on a Kubernetes management node when the goal is to turn a vLLM-A
 
 ## Workflow
 
-1. Phase 1: Read [modules/model-list-fetcher.md](/home/shishupei/app/vllm-skill/modules/model-list-fetcher.md) and use `scripts/fetch-model-list.sh`
-2. Phase 2: Read [modules/user-selector.md](/home/shishupei/app/vllm-skill/modules/user-selector.md)
-3. Phase 3: Read [modules/doc-parser.md](/home/shishupei/app/vllm-skill/modules/doc-parser.md) and use `scripts/parse-model-doc.sh`
-4. Phase 4: Read [modules/k8s-env-detector.md](/home/shishupei/app/vllm-skill/modules/k8s-env-detector.md) and use `scripts/detect-k8s-env.sh`
-5. Phase 5: Read [modules/image-handler.md](/home/shishupei/app/vllm-skill/modules/image-handler.md) and use `scripts/push-image.sh`
-6. Phase 6: Read [modules/config-guide.md](/home/shishupei/app/vllm-skill/modules/config-guide.md)
-7. Phase 7: Read [modules/k8s-yaml-generator.md](/home/shishupei/app/vllm-skill/modules/k8s-yaml-generator.md) and fill `templates/k8s-namespace.yaml`, `templates/k8s-configmap.yaml`, `templates/k8s-deployment.yaml`, `templates/k8s-service.yaml`, and `templates/apply-all.sh`
-8. Phase 8: Read [modules/k8s-apply-guide.md](/home/shishupei/app/vllm-skill/modules/k8s-apply-guide.md)
-9. Phase 9: Read [modules/container-env-detector.md](/home/shishupei/app/vllm-skill/modules/container-env-detector.md) and use `scripts/detect-container-npu.sh`
-10. Phase 10: Read [modules/deploy-generator.md](/home/shishupei/app/vllm-skill/modules/deploy-generator.md) and fill `templates/deploy.sh`
-11. Phase 11: Read [modules/deploy-execution-guide.md](/home/shishupei/app/vllm-skill/modules/deploy-execution-guide.md)
-12. Phase 12: Read [modules/output-guide.md](/home/shishupei/app/vllm-skill/modules/output-guide.md)
+1. Phase 1: Read [modules/model-list-fetcher.md](modules/model-list-fetcher.md) and use `scripts/fetch-model-list.sh`
+2. Phase 2: Read [modules/user-selector.md](modules/user-selector.md)
+3. Phase 3: Read [modules/doc-parser.md](modules/doc-parser.md) and use `scripts/parse-model-doc.sh`
+4. Phase 4: Read [modules/k8s-env-detector.md](modules/k8s-env-detector.md) and use `scripts/detect-k8s-env.sh`
+5. Phase 5: Read [modules/image-handler.md](modules/image-handler.md) and use `scripts/push-image.sh`
+6. Phase 6: Read [modules/config-guide.md](modules/config-guide.md)
+7. Phase 7: Read [modules/k8s-yaml-generator.md](modules/k8s-yaml-generator.md) and fill `templates/k8s-namespace.yaml`, `templates/k8s-configmap.yaml`, `templates/k8s-deployment.yaml`, `templates/k8s-service.yaml`, and `templates/apply-all.sh`
+8. Phase 8: Read [modules/k8s-apply-guide.md](modules/k8s-apply-guide.md)
+9. Phase 9: Read [modules/container-env-detector.md](modules/container-env-detector.md) and use `scripts/detect-container-npu.sh`
+10. Phase 10: Read [modules/deploy-generator.md](modules/deploy-generator.md) and fill `templates/deploy.sh`
+11. Phase 11: Read [modules/deploy-execution-guide.md](modules/deploy-execution-guide.md)
+12. Phase 12: Read [modules/output-guide.md](modules/output-guide.md)
 
 ## Output
 
