@@ -20,6 +20,7 @@ vLLM-Ascend 部署准备阶段，在任意有网络的环境执行。
 4. **Phase 5**: `modules/image-handler.md` - 镜像处理
 5. **Phase 6**: `modules/config-guide.md` - 交互配置
 6. **Phase 7**: `modules/template-generator.md` - 生成模板
+7. **Phase 7.5**: `modules/deploy-script-generator.md` - 生成启动脚本
 
 ## 输出
 
@@ -27,6 +28,7 @@ vLLM-Ascend 部署准备阶段，在任意有网络的环境执行。
 - `config.json` - 用户配置汇总
 - `image-info.json` - 镜像信息
 - `templates/` - K8s 模板文件
+- `scripts/` - vLLM 启动脚本
 
 ## 下一步
 

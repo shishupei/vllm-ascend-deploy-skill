@@ -1,75 +1,487 @@
-# vLLM-Deploy Skill 实现计划
+# vLLM-Deploy Skill 实现计划更新
 
-> **面向 AI 代理的工作者：** 此计划设计为手动执行模式。每个任务完成后等待用户确认，再继续下一个任务。使用复选框（`- [ ]`）语法跟踪进度。
+> **面向 AI 代理的工作者：** 必需子技能：使用 superpowers:subagent-driven-development（推荐）或 superpowers:executing-plans 逐任务实现此计划。步骤使用复选框（`- [ ]`）语法来跟踪进度。
 
-**目标：** 创建两个 Skill（vllm-deploy-prepare 和 vllm-deploy-execute），实现从 vLLM-Ascend 文档自动提取部署脚本并生成 K8s YAML。
+**目标：** 为 Skill 1 添加 vLLM 服务拉起脚本模板，支持手动输入环境信息或 Skill 2 探测填充占位符。
 
-**架构：** 分拆为两个独立 Skill，准备阶段（任意环境）和执行阶段（K8s 管理节点），通过 config.json 衔接。
+**架构：** 创建 4 个启动脚本模板（单机/多机/PD分离-Prefill/PD分离-Decode），使用 `${VAR}` 占位符。Skill 1 生成时填充已知参数，未知参数保留占位符由 Skill 2 探测填充。
 
-**技术栈：** Bash 脚本、K8s YAML 模板、Markdown 模块指南
-
-**设计规格：** `docs/superpowers/specs/2026-05-14-vllm-deploy-skill-design.md`
+**技术栈：** Bash 脚本、K8s YAML、环境变量
 
 ---
 
-## 文件结构总览
+## 文件结构
 
-共 28 个文件，按以下顺序创建：
+本次更新新增/修改的文件：
 
-| 任务 | 文件 | 说明 |
-|------|------|------|
-| T1 | skill-prepare/skill.md, skill.yaml | Skill 1 入口和元数据 |
-| T2 | skill-prepare/modules/*.md (6 个) | Skill 1 模块指南 |
-| T3 | skill-prepare/scripts/*.sh (2 个) | Skill 1 辅助脚本 |
-| T4 | skill-prepare/templates/* (6 个) | Skill 1 K8s 模板 |
-| T5 | skill-execute/skill.md, skill.yaml | Skill 2 入口和元数据 |
-| T6 | skill-execute/modules/*.md (7 个) | Skill 2 模块指南 |
-| T7 | skill-execute/scripts/*.sh (3 个) | Skill 2 辅助脚本 |
+| 文件 | 职责 |
+|------|------|
+| `vllm-deploy-prepare/scripts/start-single-node.sh` | 单机启动脚本模板 |
+| `vllm-deploy-prepare/scripts/start-multi-node-master.sh` | 多机 Master 启动脚本模板 |
+| `vllm-deploy-prepare/scripts/start-multi-node-worker.sh` | 多机 Worker 启动脚本模板 |
+| `vllm-deploy-prepare/scripts/start-prefill.sh` | PD 分离 Prefill 启动脚本模板 |
+| `vllm-deploy-prepare/scripts/start-decode.sh` | PD 分离 Decode 启动脚本模板 |
+| `vllm-deploy-prepare/modules/deploy-script-generator.md` | Phase 7 新增：生成启动脚本模块 |
 
 ---
 
-## 任务 1：Skill 1 基础结构
+## 任务 1：创建单机启动脚本模板
 
 **文件：**
-- 创建：`skill-prepare/skill.md`
-- 创建：`skill-prepare/skill.yaml`
+- 创建：`vllm-deploy-prepare/scripts/start-single-node.sh`
 
-**说明：** Skill 1 入口文件和元数据定义。
-
-- [ ] **步骤 1：创建目录结构**
+- [ ] **步骤 1：创建单机启动脚本**
 
 ```bash
-mkdir -p skill-prepare/modules skill-prepare/scripts skill-prepare/templates
+#!/bin/bash
+# vLLM 单机启动脚本
+# 环境信息来源：手动输入 或 Skill 2 探测填充
+
+set -e
+
+# ============ 环境变量配置 ============
+# 手动输入时可预先填充，Skill 2 探测时用占位符
+
+MODEL_PATH="${MODEL_PATH:-${MODEL_PATH_PLACEHOLDER}}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-${TP_SIZE_PLACEHOLDER}}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-256}"
+GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-0.9}"
+
+# ============ 服务端口配置 ============
+SERVICE_PORT="${SERVICE_PORT:-8000}"
+
+# ============ 可选参数 ============
+TRUST_REMOTE_CODE="${TRUST_REMOTE_CODE:-true}"
+ENFORCE_EAGER="${ENFORCE_EAGER:-false}"
+
+# ============ 启动命令构建 ============
+echo "Starting vLLM serve on single node..."
+echo "Model: ${MODEL_PATH}"
+echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}"
+echo "Max Model Len: ${MAX_MODEL_LEN}"
+echo "Max Num Seqs: ${MAX_NUM_SEQS}"
+
+vllm serve "${MODEL_PATH}" \
+    --served-model-name "${MODEL_NAME:-default}" \
+    --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --max-num-seqs "${MAX_NUM_SEQS}" \
+    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
+    --port "${SERVICE_PORT}" \
+    ${TRUST_REMOTE_CODE:-} \
+    ${ENFORCE_EAGER:-}
+
+echo "vLLM service started on port ${SERVICE_PORT}"
 ```
 
-- [ ] **步骤 2：创建 skill.yaml**
+- [ ] **步骤 2：设置可执行权限**
 
-```yaml
-name: vllm-deploy-prepare
-description: vLLM-Ascend 部署准备 - 获取模型列表、解析文档、处理镜像、生成配置
-version: 1.0.0
-author: buchuibuhei
-triggers:
-  - /vllm-deploy-prepare
-  - vllm 部署准备
-dependencies:
-  - curl/wget
-  - docker (可选)
-output_dir: .vllm-deploy/
+```bash
+chmod +x vllm-deploy-prepare/scripts/start-single-node.sh
 ```
 
-- [ ] **步骤 3：创建 skill.md**
+- [ ] **步骤 3：Commit**
+
+```bash
+git add vllm-deploy-prepare/scripts/start-single-node.sh
+git commit -m "feat(skill-prepare): add single-node vLLM startup script template"
+```
+
+---
+
+## 任务 2：创建多机分布式启动脚本模板
+
+**文件：**
+- 创建：`vllm-deploy-prepare/scripts/start-multi-node-master.sh`
+- 创建：`vllm-deploy-prepare/scripts/start-multi-node-worker.sh`
+
+- [ ] **步骤 1：创建 Master 启动脚本**
+
+```bash
+#!/bin/bash
+# vLLM 多机分布式 Master 启动脚本（Rank 0）
+# 环境信息来源：手动输入 或 Skill 2 探测填充
+
+set -e
+
+# ============ 环境变量配置 ============
+MODEL_PATH="${MODEL_PATH:-${MODEL_PATH_PLACEHOLDER}}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-${TP_SIZE_PLACEHOLDER}}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-256}"
+
+# ============ 分布式配置（Skill 2 探测填充）============
+RANK="${RANK:-0}"
+WORLD_SIZE="${WORLD_SIZE:-${WORLD_SIZE_PLACEHOLDER}}"
+MASTER_ADDR="${MASTER_ADDR:-${MASTER_ADDR_PLACEHOLDER}}"  # 本节点 IP
+MASTER_PORT="${MASTER_PORT:-29500}"
+
+# ============ 网络配置（Skill 2 探测填充）============
+HCCL_IF_IP="${HCCL_IF_IP:-${NODE_IP_PLACEHOLDER}}"
+GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-eth0}"
+TP_SOCKET_IFNAME="${TP_SOCKET_IFNAME:-eth0}"
+
+# 导出环境变量
+export HCCL_IF_IP
+export GLOO_SOCKET_IFNAME
+export TP_SOCKET_IFNAME
+
+# ============ 启动命令构建 ============
+echo "Starting vLLM serve as Master (Rank ${RANK})..."
+echo "Model: ${MODEL_PATH}"
+echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}"
+echo "World Size: ${WORLD_SIZE}"
+echo "Master Addr: ${MASTER_ADDR}"
+echo "Master Port: ${MASTER_PORT}"
+
+vllm serve "${MODEL_PATH}" \
+    --served-model-name "${MODEL_NAME:-default}" \
+    --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --max-num-seqs "${MAX_NUM_SEQS}" \
+    --distributed-executor-backend ray \
+    --port 8000 \
+    --trust-remote-code
+
+echo "vLLM Master service started"
+```
+
+- [ ] **步骤 2：创建 Worker 启动脚本**
+
+```bash
+#!/bin/bash
+# vLLM 多机分布式 Worker 启动脚本（Rank 1-N）
+# 环境信息来源：手动输入 或 Skill 2 探测填充
+
+set -e
+
+# ============ 环境变量配置 ============
+MODEL_PATH="${MODEL_PATH:-${MODEL_PATH_PLACEHOLDER}}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-${TP_SIZE_PLACEHOLDER}}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-256}"
+
+# ============ 分布式配置（Skill 2 探测填充）============
+RANK="${RANK:-${WORKER_RANK_PLACEHOLDER}}"        # Worker Rank 编号
+WORLD_SIZE="${WORLD_SIZE:-${WORLD_SIZE_PLACEHOLDER}}"
+MASTER_ADDR="${MASTER_ADDR:-${MASTER_ADDR_PLACEHOLDER}}"  # Master 节点 IP
+MASTER_PORT="${MASTER_PORT:-29500}"
+
+# ============ 网络配置（Skill 2 探测填充）============
+HCCL_IF_IP="${HCCL_IF_IP:-${NODE_IP_PLACEHOLDER}}"  # 本节点 IP
+GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-eth0}"
+TP_SOCKET_IFNAME="${TP_SOCKET_IFNAME:-eth0}"
+
+# 导出环境变量
+export HCCL_IF_IP
+export GLOO_SOCKET_IFNAME
+export TP_SOCKET_IFNAME
+export RANK
+export WORLD_SIZE
+export MASTER_ADDR
+export MASTER_PORT
+
+# ============ 启动命令构建 ============
+echo "Starting vLLM serve as Worker (Rank ${RANK})..."
+echo "Model: ${MODEL_PATH}"
+echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}"
+echo "World Size: ${WORLD_SIZE}"
+echo "Master Addr: ${MASTER_ADDR}"
+echo "Connecting to Master..."
+
+vllm serve "${MODEL_PATH}" \
+    --served-model-name "${MODEL_NAME:-default}" \
+    --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --max-num-seqs "${MAX_NUM_SEQS}" \
+    --distributed-executor-backend ray \
+    --port 8000 \
+    --trust-remote-code
+
+echo "vLLM Worker service started (Rank ${RANK})"
+```
+
+- [ ] **步骤 3：设置可执行权限**
+
+```bash
+chmod +x vllm-deploy-prepare/scripts/start-multi-node-master.sh
+chmod +x vllm-deploy-prepare/scripts/start-multi-node-worker.sh
+```
+
+- [ ] **步骤 4：Commit**
+
+```bash
+git add vllm-deploy-prepare/scripts/start-multi-node-*.sh
+git commit -m "feat(skill-prepare): add multi-node vLLM startup scripts for Master/Worker"
+```
+
+---
+
+## 任务 3：创建 PD 分离启动脚本模板
+
+**文件：**
+- 创建：`vllm-deploy-prepare/scripts/start-prefill.sh`
+- 创建：`vllm-deploy-prepare/scripts/start-decode.sh`
+
+- [ ] **步骤 1：创建 Prefill 启动脚本（KV Producer）**
+
+```bash
+#!/bin/bash
+# vLLM PD 分离 Prefill 启动脚本（KV Producer）
+# 环境信息来源：手动输入 或 Skill 2 探测填充
+
+set -e
+
+# ============ 环境变量配置 ============
+MODEL_PATH="${MODEL_PATH:-${MODEL_PATH_PLACEHOLDER}}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-${PREFILL_TP_SIZE_PLACEHOLDER}}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-${MAX_MODEL_LEN}}"
+
+# ============ KV Transfer 配置 ============
+KV_CONNECTOR="${KV_CONNECTOR:-MooncakeConnectorV1}"
+KV_ROLE="kv_producer"
+KV_PORT="${KV_PORT:-20001}"
+ENGINE_ID="${ENGINE_ID:-0}"
+KV_RANK="${KV_RANK:-0}"
+KV_PARALLEL_SIZE="${KV_PARALLEL_SIZE:-1}"
+
+# ============ 网络配置（Skill 2 探测填充）============
+HCCL_IF_IP="${HCCL_IF_IP:-${NODE_IP_PLACEHOLDER}}"
+GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-eth0}"
+
+export HCCL_IF_IP
+export GLOO_SOCKET_IFNAME
+
+# ============ 构建 KV Transfer Config ============
+KV_TRANSFER_CONFIG=$(cat <<EOF
+{
+    "kv_connector": "${KV_CONNECTOR}",
+    "kv_buffer_device": "npu",
+    "kv_role": "${KV_ROLE}",
+    "kv_parallel_size": ${KV_PARALLEL_SIZE},
+    "kv_port": "${KV_PORT}",
+    "engine_id": "${ENGINE_ID}",
+    "kv_rank": ${KV_RANK}
+}
+EOF
+)
+
+# ============ 启动命令构建 ============
+echo "Starting vLLM Prefill instance (KV Producer)..."
+echo "Model: ${MODEL_PATH}"
+echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}"
+echo "KV Role: ${KV_ROLE}"
+echo "KV Port: ${KV_PORT}"
+
+vllm serve "${MODEL_PATH}" \
+    --served-model-name "${MODEL_NAME:-default}" \
+    --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+    --gpu-memory-utilization 0.8 \
+    --port 8100 \
+    --trust-remote-code \
+    --enforce-eager \
+    --kv-transfer-config "${KV_TRANSFER_CONFIG}"
+
+echo "vLLM Prefill service started on port 8100"
+```
+
+- [ ] **步骤 2：创建 Decode 启动脚本（KV Consumer）**
+
+```bash
+#!/bin/bash
+# vLLM PD 分离 Decode 启动脚本（KV Consumer）
+# 环境信息来源：手动输入 或 Skill 2 探测填充
+
+set -e
+
+# ============ 环境变量配置 ============
+MODEL_PATH="${MODEL_PATH:-${MODEL_PATH_PLACEHOLDER}}"
+TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-${DECODE_TP_SIZE_PLACEHOLDER}}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-8192}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-${DECODE_MAX_TOKENS_PLACEHOLDER:-16384}}"
+
+# ============ KV Transfer 配置 ============
+KV_CONNECTOR="${KV_CONNECTOR:-MooncakeConnectorV1}"
+KV_ROLE="kv_consumer"
+KV_PORT="${KV_PORT:-20002}"
+ENGINE_ID="${ENGINE_ID:-1}"
+KV_RANK="${KV_RANK:-1}"
+KV_PARALLEL_SIZE="${KV_PARALLEL_SIZE:-1}"
+
+# Prefill 服务地址（Skill 2 探测填充）
+PREFILL_ADDR="${PREFILL_ADDR:-${PREFILL_ADDR_PLACEHOLDER}}"
+PREFILL_PORT="${PREFILL_PORT:-8100}"
+
+# ============ 网络配置（Skill 2 探测填充）============
+HCCL_IF_IP="${HCCL_IF_IP:-${NODE_IP_PLACEHOLDER}}"
+GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-eth0}"
+
+export HCCL_IF_IP
+export GLOO_SOCKET_IFNAME
+
+# ============ 构建 KV Transfer Config ============
+KV_TRANSFER_CONFIG=$(cat <<EOF
+{
+    "kv_connector": "${KV_CONNECTOR}",
+    "kv_buffer_device": "npu",
+    "kv_role": "${KV_ROLE}",
+    "kv_parallel_size": ${KV_PARALLEL_SIZE},
+    "kv_port": "${KV_PORT}",
+    "engine_id": "${ENGINE_ID}",
+    "kv_rank": ${KV_RANK}
+}
+EOF
+)
+
+# ============ 启动命令构建 ============
+echo "Starting vLLM Decode instance (KV Consumer)..."
+echo "Model: ${MODEL_PATH}"
+echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}"
+echo "KV Role: ${KV_ROLE}"
+echo "KV Port: ${KV_PORT}"
+echo "Prefill Addr: ${PREFILL_ADDR}:${PREFILL_PORT}"
+
+vllm serve "${MODEL_PATH}" \
+    --served-model-name "${MODEL_NAME:-default}" \
+    --tensor-parallel-size "${TENSOR_PARALLEL_SIZE}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+    --gpu-memory-utilization 0.8 \
+    --port 8200 \
+    --trust-remote-code \
+    --enforce-eager \
+    --no-enable-prefix-caching \
+    --kv-transfer-config "${KV_TRANSFER_CONFIG}"
+
+echo "vLLM Decode service started on port 8200"
+```
+
+- [ ] **步骤 3：设置可执行权限**
+
+```bash
+chmod +x vllm-deploy-prepare/scripts/start-prefill.sh
+chmod +x vllm-deploy-prepare/scripts/start-decode.sh
+```
+
+- [ ] **步骤 4：Commit**
+
+```bash
+git add vllm-deploy-prepare/scripts/start-prefill.sh vllm-deploy-prepare/scripts/start-decode.sh
+git commit -m "feat(skill-prepare): add PD separation startup scripts for Prefill/Decode"
+```
+
+---
+
+## 任务 4：创建启动脚本生成模块
+
+**文件：**
+- 创建：`vllm-deploy-prepare/modules/deploy-script-generator.md`
+
+- [ ] **步骤 1：创建模块文档**
 
 ```markdown
-# vLLM-Deploy Prepare Skill
+# Phase 7.5: 生成 vLLM 启动脚本
 
-vLLM-Ascend 部署准备阶段，在任意有网络的环境执行。
+## 目标
 
-## 触发方式
+根据部署方式生成对应的 vLLM 服务启动脚本，环境信息来源支持：
+- 手动输入：用户在 Phase 6 提供已知参数
+- Skill 2 探测：未知参数保留占位符，由 Skill 2 填充
 
-- `/vllm-deploy-prepare`
-- `vllm 部署准备`
+## 输入
 
+- config.json（Phase 6 生成的配置）
+- deploy_mode（部署方式）
+
+## 可用脚本模板
+
+| 脚本文件 | 适用部署方式 | 说明 |
+|----------|--------------|------|
+| `start-single-node.sh` | 单节点 | 单机启动命令 |
+| `start-multi-node-master.sh` | 多节点 Master | Rank 0 启动命令 |
+| `start-multi-node-worker.sh` | 多节点 Worker | Rank 1-N 启动命令 |
+| `start-prefill.sh` | PD 分离 Prefill | KV Producer 启动命令 |
+| `start-decode.sh` | PD 分离 Decode | KV Consumer 启动命令 |
+
+## 占位符说明
+
+脚本使用 `${VAR_PLACEHOLDER}` 格式的占位符，表示需要 Skill 2 探测填充：
+
+### 通用占位符
+| 占位符 | 含义 | 填充时机 |
+|--------|------|----------|
+| `${MODEL_PATH_PLACEHOLDER}` | 模型路径 | 可手动输入 |
+| `${TP_SIZE_PLACEHOLDER}` | 张量并行大小 | 可手动输入 |
+| `${NODE_IP_PLACEHOLDER}` | 节点 IP | Skill 2 探测 |
+
+### 多节点专属占位符
+| 占位符 | 含义 | 填充时机 |
+|--------|------|----------|
+| `${WORLD_SIZE_PLACEHOLDER}` | 分布式世界大小 | Skill 2 探测 |
+| `${MASTER_ADDR_PLACEHOLDER}` | Master 节点 IP | Skill 2 探测 |
+| `${WORKER_RANK_PLACEHOLDER}` | Worker Rank | Skill 2 生成 |
+
+### PD 分离专属占位符
+| 占位符 | 含义 | 填充时机 |
+|--------|------|----------|
+| `${PREFILL_TP_SIZE_PLACEHOLDER}` | Prefill TP Size | 可手动输入 |
+| `${DECODE_TP_SIZE_PLACEHOLDER}` | Decode TP Size | 可手动输入 |
+| `${DECODE_MAX_TOKENS_PLACEHOLDER}` | Decode Max Tokens | 可手动输入 |
+| `${PREFILL_ADDR_PLACEHOLDER}` | Prefill 服务地址 | Skill 2 探测 |
+
+## 脚本选择逻辑
+
+根据 `deploy_mode` 选择：
+
+| deploy_mode | 生成的脚本 |
+|-------------|------------|
+| `single_node` | `start-single-node.sh` |
+| `multi_node` | `start-multi-node-master.sh` + 多个 `start-multi-node-worker.sh` |
+| `pd_separate` | `start-prefill.sh` + `start-decode.sh` |
+| `ha_active_standby` | `start-single-node.sh`（每个副本相同） |
+
+## 输出目录
+
+```
+.vllm-deploy/
+└── scripts/
+    └── start-*.sh    # 根据部署方式生成的启动脚本
+```
+
+## AI 执行指南
+
+1. 读取 `config.json` 获取部署方式
+2. 根据部署方式选择对应脚本模板
+3. 填充已知参数（从 config.json）
+4. 保留未知参数为占位符
+5. 生成脚本文件到 `.vllm-deploy/scripts/`
+6. 展示脚本内容供用户确认
+7. 提示：未知参数将在 Skill 2 执行时探测填充
+```
+
+- [ ] **步骤 2：Commit**
+
+```bash
+git add vllm-deploy-prepare/modules/deploy-script-generator.md
+git commit -m "feat(skill-prepare): add deploy-script-generator module documentation"
+```
+
+---
+
+## 任务 5：更新 SKILL.md 添加新 Phase
+
+**文件：**
+- 修改：`vllm-deploy-prepare/SKILL.md`
+
+- [ ] **步骤 1：更新执行流程**
+
+在 SKILL.md 的执行流程中添加 Phase 7.5：
+
+```markdown
 ## 执行流程
 
 按顺序读取以下模块并执行：
@@ -79,1443 +491,107 @@ vLLM-Ascend 部署准备阶段，在任意有网络的环境执行。
 3. **Phase 3**: `modules/doc-parser.md` - 文档解析
 4. **Phase 5**: `modules/image-handler.md` - 镜像处理
 5. **Phase 6**: `modules/config-guide.md` - 交互配置
-6. **Phase 7**: `modules/template-generator.md` - 生成模板
+6. **Phase 7**: `modules/template-generator.md` - 生成 K8s 模板
+7. **Phase 7.5**: `modules/deploy-script-generator.md` - 生成启动脚本  ← 新增
+8. 进入 Phase 完成提示
+```
 
+- [ ] **步骤 2：更新输出说明**
+
+```markdown
 ## 输出
 
 生成 `.vllm-deploy/` 目录，包含：
 - `config.json` - 用户配置汇总
 - `image-info.json` - 镜像信息
-- `templates/` - K8s 模板文件
-
-## 下一步
-
-完成后运行 `/vllm-deploy-execute` 在 K8s 管理节点执行部署。
-```
-
-- [ ] **步骤 4：Commit**
-
-```bash
-git add skill-prepare/
-git commit -m "feat(skill-prepare): add skill entry and metadata"
-```
-
----
-
-## 任务 2：Skill 1 模块文件
-
-**文件：**
-- 创建：`skill-prepare/modules/model-list-fetcher.md`
-- 创建：`skill-prepare/modules/user-selector.md`
-- 创建：`skill-prepare/modules/doc-parser.md`
-- 创建：`skill-prepare/modules/image-handler.md`
-- 创建：`skill-prepare/modules/config-guide.md`
-- 创建：`skill-prepare/modules/template-generator.md`
-
-- [ ] **步骤 1：创建 model-list-fetcher.md**
-
-```markdown
-# Phase 1: 快速获取模型列表
-
-## 目标
-
-从 vLLM-Ascend 文档抓取支持的模型列表。
-
-## 默认 URL
-
-```
-https://docs.vllm.com.cn/projects/ascend/en/latest/tutorials/models/index.html
-```
-
-## 执行方式
-
-调用辅助脚本 `scripts/fetch-model-list.sh`。
-
-## 输入
-
-无（使用默认 URL）。
-
-## 输出
-
-JSON 格式的模型列表：
-
-```json
-{
-  "models": [
-    {"name": "GLM-5", "url": "GLM5.html"},
-    {"name": "Qwen2.5-7B", "url": "Qwen2.5-7B.html"}
-  ]
-}
-```
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| URL 无法访问 | 提示检查网络或文档站点状态 |
-| 提取失败 | 建议用户手动指定模型教程 URL |
-
-## AI 执行指南
-
-1. 告知用户正在获取模型列表
-2. 执行 `bash scripts/fetch-model-list.sh`
-3. 解析脚本输出，展示模型列表
-4. 进入 Phase 2
-```
-
-- [ ] **步骤 2：创建 user-selector.md**
-
-```markdown
-# Phase 2: 用户选择
-
-## 目标
-
-通过问答收集用户选择：模型、硬件规格、部署方式、镜像仓库。
-
-## 输入
-
-Phase 1 的模型列表。
-
-## 问答流程
-
-使用 AskUserQuestion 工具，逐个询问：
-
-### Q1: 选择模型
-
-展示模型列表，让用户选择一个模型。
-
-### Q2: 硬件规格
-
-选项：
-- A3（16 卡）
-- A2（8 卡）
-
-### Q3: 部署方式
-
-选项：
-- 单节点：使用 1 个节点部署
-- 多节点：使用多个节点分布式部署
-- PD分离：Prefill 和 Decode 节点分离
-
-### Q4: 目标镜像仓库
-
-让用户输入镜像仓库地址（如 `harbor.example.com/library`）。
-
-## 输出
-
-```json
-{
-  "selected_model": "GLM-5",
-  "model_url": "GLM5.html",
-  "hw_spec": "A3",
-  "deploy_mode": "multi_node",
-  "image_registry": "harbor.example.com/library"
-}
-```
-
-## AI 执行指南
-
-1. 使用 AskUserQuestion 逐个询问
-2. 记录用户选择到临时变量
-3. 进入 Phase 3
-```
-
-- [ ] **步骤 3：创建 doc-parser.md**
-
-```markdown
-# Phase 3: 针对性文档解析
-
-## 目标
-
-只解析用户选择的模型文档，提取启动脚本和镜像版本。
-
-## 输入
-
-- Phase 2 用户选择结果
-- 模型文档 URL（基于 model_url）
-
-## 完整 URL 构建
-
-```
-https://docs.vllm.com.cn/projects/ascend/en/latest/tutorials/models/{model_url}
-```
-
-## 执行方式
-
-调用辅助脚本 `scripts/parse-model-doc.sh`。
-
-## 参数
-
-传递给脚本：
-- `--url`: 完整文档 URL
-- `--hw-spec`: A3 或 A2
-- `--deploy-mode`: single_node / multi_node / pd_separate
-
-## 输出
-
-```json
-{
-  "image_version": "v0.6.0",
-  "source_image": "quay.io/vllm-ascend/vllm-ascend:v0.6.0",
-  "script_template": "vllm serve ...",
-  "extracted_params": {
-    "max_model_len": 8192,
-    "tensor_parallel_size": 8
-  }
-}
-```
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| 脚本块未找到 | 建议用户手动提供启动脚本 |
-| 镜像版本未找到 | 提示用户手动指定镜像版本 |
-
-## AI 执行指南
-
-1. 构建完整文档 URL
-2. 执行 `bash scripts/parse-model-doc.sh --url <URL> --hw-spec <SPEC> --deploy-mode <MODE>`
-3. 解析脚本输出
-4. 展示提取的脚本模板供用户确认
-5. 进入 Phase 5
-```
-
-- [ ] **步骤 4：创建 image-handler.md**
-
-```markdown
-# Phase 5: 镜像处理
-
-## 目标
-
-拉取官方镜像，打标签，推送到用户指定的镜像仓库。
-
-## 输入
-
-- Phase 3 提取的源镜像（如 `quay.io/vllm-ascend/vllm-ascend:v0.6.0`）
-- Phase 2 用户指定的目标镜像仓库
-
-## 前置检查
-
-检查 Docker 是否可用：
-
-```bash
-docker --version
-```
-
-## 处理流程
-
-如果 Docker 可用：
-
-1. 登录目标镜像仓库（如需）
-2. 拉取源镜像
-3. 打标签为目标镜像
-4. 推送目标镜像
-
-如果 Docker 不可用：
-- 告知用户需要在有 Docker 的节点执行此步骤
-- 或跳过此步骤，仅记录镜像信息到 image-info.json
-
-## 输出
-
-```json
-{
-  "source_image": "quay.io/vllm-ascend/vllm-ascend:v0.6.0",
-  "target_image": "harbor.example.com/library/vllm-ascend:v0.6.0",
-  "push_success": true,
-  "skipped": false
-}
-```
-
-保存到 `.vllm-deploy/image-info.json`。
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| Docker 不可用 | 提示跳过或切换环境 |
-| 登录失败 | 提示检查认证信息 |
-| 推送失败 | 提示检查权限和网络 |
-
-## AI 执行指南
-
-1. 检查 Docker 可用性
-2. 若可用，询问用户是否需要登录镜像仓库
-3. 执行拉取、打标签、推送
-4. 记录结果到 image-info.json
-5. 进入 Phase 6
-```
-
-- [ ] **步骤 5：创建 config-guide.md**
-
-```markdown
-# Phase 6: 交互配置
-
-## 目标
-
-通过问答确认部署参数：Namespace、模型路径、性能参数。
-
-## 输入
-
-- Phase 2-5 的结果
-- Phase 3 提取的默认参数
-
-## 问答流程
-
-使用 AskUserQuestion 工具：
-
-### Q1: Namespace 名称
-
-建议值：`vllm-{model-name}`（如 `vllm-glm5`）
-
-让用户确认或修改。
-
-### Q2: 模型路径
-
-让用户输入模型在宿主机的路径（如 `/data/models/GLM-5`）。
-
-### Q3: 性能参数确认
-
-展示 Phase 3 提取的默认参数，让用户确认或修改：
-- `max_model_len`
-- `max_num_seqs`
-- `tensor_parallel_size`（基于 NPU 数量建议）
-
-### Q4: PD 分离配置（如适用）
-
-如果 deploy_mode 为 `pd_separate`：
-- Prefill 节点数量
-- Decode 节点数量
-
-## 输出
-
-完整配置 JSON，合并 Phase 2-6 所有参数：
-
-```json
-{
-  "selected_model": "GLM-5",
-  "model_url": "GLM5.html",
-  "hw_spec": "A3",
-  "deploy_mode": "multi_node",
-  "image_registry": "harbor.example.com/library",
-  "source_image": "quay.io/vllm-ascend/vllm-ascend:v0.6.0",
-  "target_image": "harbor.example.com/library/vllm-ascend:v0.6.0",
-  "namespace": "vllm-glm5",
-  "model_path": "/data/models/GLM-5",
-  "max_model_len": 8192,
-  "max_num_seqs": 256,
-  "tensor_parallel_size": 8,
-  "master_addr": "待填充",
-  "master_port": 29500
-}
-```
-
-## AI 执行指南
-
-1. 使用 AskUserQuestion 逐个询问
-2. 合并所有参数生成完整配置
-3. 保存到 `.vllm-deploy/config.json`
-4. 进入 Phase 7
-```
-
-- [ ] **步骤 6：创建 template-generator.md**
-
-```markdown
-# Phase 7: 生成模板文件
-
-## 目标
-
-复制模板文件到输出目录，保持占位符不变（Skill 2 将填充）。
-
-## 输入
-
-- config.json
-- templates/ 目录下的模板文件
-
-## 输出目录
-
-```
-.vllm-deploy/
-├── config.json
-├── image-info.json
-└── templates/
-    ├── k8s-namespace.yaml
-    ├── k8s-configmap.yaml
-    ├── k8s-deployment.yaml.template
-    ├── k8s-service.yaml
-    ├── deploy.sh.template
-    └── apply-all.sh.template
-```
-
-## AI 执行指南
-
-1. 创建 `.vllm-deploy/templates/` 目录
-2. 复制 skill-prepare/templates/ 下所有文件到输出目录
-3. 告知用户模板已生成
-4. 提示用户运行 `/vllm-deploy-execute` 在 K8s 管理节点继续
-
-## 完成提示
-
-```
-准备阶段完成！输出文件已生成到 .vllm-deploy/
-
-下一步：
-1. 将 .vllm-deploy/ 目录复制到 K8s 管理节点
-2. 运行 /vllm-deploy-execute 继续部署
-```
-```
-
-- [ ] **步骤 7：Commit**
-
-```bash
-git add skill-prepare/modules/
-git commit -m "feat(skill-prepare): add 6 module guides for Phase 1-7"
-```
-
----
-
-## 任务 3：Skill 1 辅助脚本
-
-**文件：**
-- 创建：`skill-prepare/scripts/fetch-model-list.sh`
-- 创建：`skill-prepare/scripts/parse-model-doc.sh`
-
-- [ ] **步骤 1：创建 fetch-model-list.sh**
-
-```bash
-#!/bin/bash
-# Phase 1: 获取 vLLM-Ascend 支持的模型列表
-
-set -e
-
-DEFAULT_URL="https://docs.vllm.com.cn/projects/ascend/en/latest/tutorials/models/index.html"
-URL="${1:-$DEFAULT_URL}"
-
-echo "Fetching model list from: $URL"
-
-# 抓取页面 HTML
-HTML=$(curl -sL "$URL" 2>/dev/null || wget -qO- "$URL" 2>/dev/null)
-
-if [ -z "$HTML" ]; then
-    echo '{"error": "Failed to fetch page"}'
-    exit 1
-fi
-
-# 提取模型链接（假设链接格式为 tutorials/models/*.html）
-# 使用 grep 和 sed 提取
-MODELS=$(echo "$HTML" | grep -oP 'tutorials/models/[A-Za-z0-9_-]+\.html' | sort -u)
-
-# 构建 JSON 输出
-echo '{"models": ['
-
-FIRST=true
-while IFS= read -r url; do
-    # 提取模型名称（去掉 .html 后缀）
-    NAME=$(basename "$url" .html)
-    
-    if [ "$FIRST" = true ]; then
-        FIRST=false
-    else
-        echo ','
-    fi
-    
-    echo "{\"name\": \"$NAME\", \"url\": \"$url\"}"
-done <<< "$MODELS"
-
-echo ']}'
-```
-
-- [ ] **步骤 2：创建 parse-model-doc.sh**
-
-```bash
-#!/bin/bash
-# Phase 3: 解析模型文档，提取启动脚本和镜像版本
-
-set -e
-
-usage() {
-    echo "Usage: $0 --url <URL> --hw-spec <A3|A2> --deploy-mode <single_node|multi_node|pd_separate>"
-    exit 1
-}
-
-# 解析参数
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --url) URL="$2"; shift 2 ;;
-        --hw-spec) HW_SPEC="$2"; shift 2 ;;
-        --deploy-mode) DEPLOY_MODE="$2"; shift 2 ;;
-        *) usage ;;
-    esac
-done
-
-if [ -z "$URL" ] || [ -z "$HW_SPEC" ] || [ -z "$DEPLOY_MODE" ]; then
-    usage
-fi
-
-echo "Parsing: $URL"
-echo "HW Spec: $HW_SPEC"
-echo "Deploy Mode: $DEPLOY_MODE"
-
-# 抓取页面 HTML
-HTML=$(curl -sL "$URL" 2>/dev/null || wget -qO- "$URL" 2>/dev/null)
-
-if [ -z "$HTML" ]; then
-    echo '{"error": "Failed to fetch page"}'
-    exit 1
-fi
-
-# 提取镜像版本（查找 vllm-ascend:v* 格式）
-IMAGE_VERSION=$(echo "$HTML" | grep -oP 'vllm-ascend:v[0-9.]+' | head -1 | sed 's/vllm-ascend://')
-
-if [ -z "$IMAGE_VERSION" ]; then
-    IMAGE_VERSION="unknown"
-fi
-
-SOURCE_IMAGE="quay.io/vllm-ascend/vllm-ascend:$IMAGE_VERSION"
-
-# 提取启动脚本块（查找 bash 代码块）
-# 根据硬件规格和部署模式定位对应脚本
-SCRIPT_BLOCK=$(echo "$HTML" | sed -n "/$HW_SPEC/,/```/p" | grep -A 50 "vllm serve" | head -20)
-
-# 输出 JSON
-cat <<EOF
-{
-  "image_version": "$IMAGE_VERSION",
-  "source_image": "$SOURCE_IMAGE",
-  "hw_spec": "$HW_SPEC",
-  "deploy_mode": "$DEPLOY_MODE",
-  "script_template": "$SCRIPT_BLOCK"
-}
-EOF
+- `templates/` - K8s YAML 模板文件
+- `scripts/` - vLLM 启动脚本（新增）
 ```
 
 - [ ] **步骤 3：Commit**
 
 ```bash
-git add skill-prepare/scripts/
-git commit -m "feat(skill-prepare): add helper scripts for Phase 1 and 3"
+git add vllm-deploy-prepare/SKILL.md
+git commit -m "feat(skill-prepare): add Phase 7.5 for startup script generation"
 ```
 
 ---
 
-## 任务 4：Skill 1 K8s 模板文件
+## 任务 6：同步更新到已安装 Skill
 
-**文件：**
-- 创建：`skill-prepare/templates/k8s-namespace.yaml`
-- 创建：`skill-prepare/templates/k8s-configmap.yaml`
-- 创建：`skill-prepare/templates/k8s-deployment.yaml.template`
-- 创建：`skill-prepare/templates/k8s-service.yaml`
-- 创建：`skill-prepare/templates/deploy.sh.template`
-- 创建：`skill-prepare/templates/apply-all.sh.template`
-
-- [ ] **步骤 1：创建 k8s-namespace.yaml**
-
-```yaml
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: ${NAMESPACE}
-  labels:
-    app: vllm-deploy
-    model: ${MODEL_NAME}
-```
-
-- [ ] **步骤 2：创建 k8s-configmap.yaml**
-
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: vllm-config
-  namespace: ${NAMESPACE}
-data:
-  MODEL_PATH: "${MODEL_PATH}"
-  MAX_MODEL_LEN: "${MAX_MODEL_LEN}"
-  MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
-  TENSOR_PARALLEL_SIZE: "${TENSOR_PARALLEL_SIZE}"
-```
-
-- [ ] **步骤 3：创建 k8s-deployment.yaml.template**
-
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: vllm-deploy-${NODE_NAME}
-  namespace: ${NAMESPACE}
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: vllm-deploy
-      node: ${NODE_NAME}
-  template:
-    metadata:
-      labels:
-        app: vllm-deploy
-        node: ${NODE_NAME}
-    spec:
-      nodeName: ${NODE_NAME}
-      containers:
-      - name: vllm
-        image: ${IMAGE}
-        command: ["sleep", "infinity"]
-        resources:
-          limits:
-            ${NPU_RESOURCE_TYPE}: ${NPU_COUNT}
-          requests:
-            ${NPU_RESOURCE_TYPE}: ${NPU_COUNT}
-        volumeMounts:
-        - name: model-storage
-          mountPath: ${MODEL_MOUNT_PATH}
-        - name: dev-mount
-          mountPath: /dev
-        - name: sys-mount
-          mountPath: /sys
-      volumes:
-      - name: model-storage
-        hostPath:
-          path: ${MODEL_PATH_HOST}
-          type: Directory
-      - name: dev-mount
-        hostPath:
-          path: /dev
-      - name: sys-mount
-        hostPath:
-          path: /sys
-```
-
-- [ ] **步骤 4：创建 k8s-service.yaml**
-
-```yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: vllm-service
-  namespace: ${NAMESPACE}
-spec:
-  type: NodePort
-  selector:
-    app: vllm-deploy
-  ports:
-  - port: 8000
-    targetPort: 8000
-    nodePort: ${SERVICE_PORT}
-```
-
-- [ ] **步骤 5：创建 deploy.sh.template**
+- [ ] **步骤 1：同步脚本文件**
 
 ```bash
-#!/bin/bash
-# Pod 内 vllm serve 启动脚本
-
-set -e
-
-MODEL_PATH="${MODEL_PATH}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN}"
-MAX_NUM_SEQS="${MAX_NUM_SEQS}"
-TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE}"
-MASTER_ADDR="${MASTER_ADDR}"
-MASTER_PORT="${MASTER_PORT}"
-RANK="${RANK}"
-WORLD_SIZE="${WORLD_SIZE}"
-
-echo "Starting vLLM serve..."
-echo "Model: $MODEL_PATH"
-echo "Tensor Parallel Size: $TENSOR_PARALLEL_SIZE"
-echo "Rank: $RANK / World Size: $WORLD_SIZE"
-
-vllm serve "$MODEL_PATH" \
-    --max-model-len "$MAX_MODEL_LEN" \
-    --max-num-seqs "$MAX_NUM_SEQS" \
-    --tensor-parallel-size "$TENSOR_PARALLEL_SIZE" \
-    --distributed-executor-backend ray \
-    --master-addr "$MASTER_ADDR" \
-    --master-port "$MASTER_PORT"
+cp vllm-deploy-prepare/scripts/start-*.sh ~/.claude/skills/vllm-deploy-prepare/scripts/
+chmod +x ~/.claude/skills/vllm-deploy-prepare/scripts/start-*.sh
 ```
 
-- [ ] **步骤 6：创建 apply-all.sh.template**
+- [ ] **步骤 2：同步模块文件**
 
 ```bash
-#!/bin/bash
-# 一键 apply 所有 K8s YAML 文件
-
-set -e
-
-NAMESPACE="${NAMESPACE}"
-
-echo "Applying K8s resources to namespace: $NAMESPACE"
-
-kubectl apply -f namespace.yaml
-kubectl apply -f configmap.yaml
-
-# Apply all deployment files
-for deploy in deployment-*.yaml; do
-    kubectl apply -f "$deploy"
-done
-
-kubectl apply -f service.yaml
-
-echo "Waiting for pods to be ready..."
-kubectl wait --for=condition=Ready pods -l app=vllm-deploy -n "$NAMESPACE" --timeout=300s
-
-echo "All pods are ready!"
-echo "Service NodePort:"
-kubectl get svc vllm-service -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].nodePort}'
+cp vllm-deploy-prepare/modules/deploy-script-generator.md ~/.claude/skills/vllm-deploy-prepare/modules/
+cp vllm-deploy-prepare/SKILL.md ~/.claude/skills/vllm-deploy-prepare/SKILL.md
 ```
 
-- [ ] **步骤 7：Commit**
+- [ ] **步骤 3：验证安装**
 
 ```bash
-git add skill-prepare/templates/
-git commit -m "feat(skill-prepare): add 6 K8s templates with placeholders"
+ls -la ~/.claude/skills/vllm-deploy-prepare/scripts/
+ls -la ~/.claude/skills/vllm-deploy-prepare/modules/
 ```
 
 ---
 
-## 任务 5：Skill 2 基础结构
-
-**文件：**
-- 创建：`skill-execute/skill.md`
-- 创建：`skill-execute/skill.yaml`
-
-- [ ] **步骤 1：创建目录结构**
-
-```bash
-mkdir -p skill-execute/modules skill-execute/scripts
-```
-
-- [ ] **步骤 2：创建 skill.yaml**
-
-```yaml
-name: vllm-deploy-execute
-description: vLLM-Ascend 部署执行 - K8s 环境探测、生成 YAML、执行部署
-version: 1.0.0
-author: buchuibuhei
-triggers:
-  - /vllm-deploy-execute
-  - vllm 部署执行
-dependencies:
-  - kubectl
-  - .vllm-deploy/ 目录存在
-prerequisite_skill: vllm-deploy-prepare
-output_dir: .vllm-deploy/k8s/
-```
-
-- [ ] **步骤 3：创建 skill.md**
-
-```markdown
-# vLLM-Deploy Execute Skill
-
-vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
-
-## 前置条件
-
-- 已运行 `/vllm-deploy-prepare`
-- `.vllm-deploy/config.json` 存在
-- kubectl 可用且有集群管理权限
-
-## 触发方式
-
-- `/vllm-deploy-execute`
-- `vllm 部署执行`
-
-## 执行流程
-
-按顺序读取以下模块并执行：
-
-1. **Phase 4**: `modules/k8s-env-detector.md` - K8s 环境探测
-2. **Phase 7补**: `modules/yaml-generator.md` - 填充模板生成 YAML
-3. **Phase 8**: `modules/k8s-apply-guide.md` - 用户执行 apply
-4. **Phase 9**: `modules/container-env-detector.md` - 容器内探测
-5. **Phase 10**: `modules/deploy-generator.md` - 生成部署脚本
-6. **Phase 11**: `modules/deploy-execution-guide.md` - 用户执行部署
-7. **Phase 12**: `modules/output-guide.md` - 输出交付
-
-## 用户确认点
-
-| 阶段 | 用户操作 |
-|------|---------|
-| Phase 4 后 | 确认节点选择 |
-| Phase 8 | 手动执行 `bash apply-all.sh` |
-| Phase 11 | 手动执行 `kubectl exec ... deploy.sh` |
-
-## 输出
-
-最终交付文件在 `.vllm-deploy/k8s/`。
-```
-
-- [ ] **步骤 4：Commit**
-
-```bash
-git add skill-execute/
-git commit -m "feat(skill-execute): add skill entry and metadata"
-```
-
----
-
-## 任务 6：Skill 2 模块文件
-
-**文件：**
-- 创建：`skill-execute/modules/k8s-env-detector.md`
-- 创建：`skill-execute/modules/yaml-generator.md`
-- 创建：`skill-execute/modules/k8s-apply-guide.md`
-- 创建：`skill-execute/modules/container-env-detector.md`
-- 创建：`skill-execute/modules/deploy-generator.md`
-- 创建：`skill-execute/modules/deploy-execution-guide.md`
-- 创建：`skill-execute/modules/output-guide.md`
-
-- [ ] **步骤 1：创建 k8s-env-detector.md**
-
-```markdown
-# Phase 4: K8s 环境探测
-
-## 目标
-
-探测 K8s 集群节点、NPU 数量、硬件规格。
-
-## 前置检查
-
-1. 检查 kubectl 可用：`kubectl version`
-2. 检查集群连接：`kubectl cluster-info`
-
-## 执行方式
-
-调用辅助脚本 `scripts/detect-k8s-env.sh`。
-
-## 输出
-
-```json
-{
-  "kubectl_available": true,
-  "cluster_connected": true,
-  "nodes": [
-    {
-      "name": "node-1",
-      "ip": "192.168.1.100",
-      "npu_count": 16,
-      "hw_spec": "A3"
-    }
-  ],
-  "recommended_nodes": ["node-1"]
-}
-```
-
-保存到 `.vllm-deploy/detection-result.json`。
-
-## 用户确认
-
-展示探测结果，让用户确认：
-- 节点选择是否正确
-- 是否使用推荐节点
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| kubectl 不可用 | 提示安装并配置 kubeconfig |
-| 集群连接失败 | 提示检查 kubeconfig |
-| NPU 资源未注册 | 提示检查 Ascend Device Plugin |
-
-## AI 执行指南
-
-1. 执行 `bash scripts/detect-k8s-env.sh`
-2. 解析输出，展示节点列表
-3. 使用 AskUserQuestion 让用户确认节点选择
-4. 进入 Phase 7补
-```
-
-- [ ] **步骤 2：创建 yaml-generator.md**
-
-```markdown
-# Phase 7补: 填充模板生成 YAML
-
-## 目标
-
-读取模板 + 探测结果，填充占位符生成最终 YAML。
-
-## 输入
-
-- `.vllm-deploy/config.json`
-- `.vllm-deploy/detection-result.json`
-- `.vllm-deploy/templates/` 下的模板文件
-
-## 执行方式
-
-调用辅助脚本 `scripts/fill-template.sh`。
-
-## 参数传递
-
-- `--config`: config.json 路径
-- `--detection`: detection-result.json 路径
-- `--templates`: templates 目录路径
-- `--output`: k8s 输出目录路径
-
-## 输出
-
-生成 `.vllm-deploy/k8s/` 目录：
-
-```
-k8s/
-├── namespace.yaml
-├── configmap.yaml
-├── deployment-node1.yaml
-├── deployment-node2.yaml (多节点时)
-├── service.yaml
-└── apply-all.sh
-```
-
-## AI 执行指南
-
-1. 创建 `.vllm-deploy/k8s/` 目录
-2. 执行 `bash scripts/fill-template.sh --config ... --detection ... --templates ... --output ...`
-3. 展示生成的 YAML 文件列表
-4. 进入 Phase 8
-```
-
-- [ ] **步骤 3：创建 k8s-apply-guide.md**
-
-```markdown
-# Phase 8: 用户执行 K8s Apply
-
-## 目标
-
-指导用户手动执行 apply-all.sh。
-
-## 用户操作
-
-```bash
-cd .vllm-deploy/k8s
-bash apply-all.sh
-```
-
-## AI 行为
-
-**不自动执行**，只提供指引。
-
-告知用户：
-1. YAML 文件已生成
-2. 执行命令
-3. 等待 Pod 启动
-
-## 等待确认
-
-AI 等待用户回复：
-- "Pod 已启动成功" → 进入 Phase 9
-- "启动失败" → 进入错误处理流程
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| Pod 启动失败 | 检查 kubectl describe pod 输出 |
-| 镜像拉取失败 | 检查镜像仓库配置 |
-| NPU 资源不足 | 检查节点 NPU 资源 |
-
-## AI 执行指南
-
-1. 告知用户执行 `bash apply-all.sh`
-2. 等待用户确认 Pod 状态
-3. 用户确认成功后进入 Phase 9
-```
-
-- [ ] **步骤 4：创建 container-env-detector.md**
-
-```markdown
-# Phase 9: 容器内环境探测
-
-## 目标
-
-进入 Pod 探测 NPU 设备映射情况。
-
-## 前置条件
-
-Pod 已启动成功。
-
-## 获取 Pod 名称
-
-```bash
-kubectl get pods -n ${NAMESPACE} -l app=vllm-deploy
-```
-
-## 执行方式
-
-调用辅助脚本 `scripts/detect-container-npu.sh`。
-
-## 输出
-
-```json
-{
-  "pod_name": "vllm-deploy-node1-xxx",
-  "container_npu_count": 8,
-  "devices_mapped": ["davinci0", "davinci1", ...]
-}
-```
-
-## 确认 NPU 数量
-
-展示容器内 NPU 数量，让用户确认是否正确。
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| NPU 设备未映射 | 检查 Device Plugin 配置 |
-| 数量不匹配 | 检查 Deployment 资源配置 |
-
-## AI 执行指南
-
-1. 获取 Pod 名称
-2. 执行 `bash scripts/detect-container-npu.sh --pod <POD_NAME> --namespace <NAMESPACE>`
-3. 展示 NPU 数量
-4. 进入 Phase 10
-```
-
-- [ ] **步骤 5：创建 deploy-generator.md**
-
-```markdown
-# Phase 10: 生成部署脚本
-
-## 目标
-
-根据容器内 NPU 数量生成 deploy.sh。
-
-## 输入
-
-- Phase 9 容器内 NPU 数量
-- config.json 参数
-
-## 参数计算
-
-根据 deploy_mode 计算分布式参数：
-
-### 单节点
-
-```bash
-RANK=0
-WORLD_SIZE=1
-MASTER_ADDR=localhost
-```
-
-### 多节点
-
-第一个节点（Master）：
-```bash
-RANK=0
-MASTER_ADDR=<本节点 IP>
-```
-
-其他节点：
-```bash
-RANK=<节点序号>
-MASTER_ADDR=<第一个节点 IP>
-```
-
-## 输出
-
-生成 `.vllm-deploy/k8s/deploy.sh`。
-
-## AI 执行指南
-
-1. 读取 config.json 和 Phase 9 结果
-2. 计算分布式参数
-3. 填充 deploy.sh.template
-4. 展示 deploy.sh 内容供用户确认
-5. 进入 Phase 11
-```
-
-- [ ] **步骤 6：创建 deploy-execution-guide.md**
-
-```markdown
-# Phase 11: 用户执行部署脚本
-
-## 目标
-
-指导用户在 Pod 内执行 deploy.sh。
-
-## 用户操作
-
-```bash
-# 将 deploy.sh 复制到 Pod
-kubectl cp .vllm-deploy/k8s/deploy.sh -n ${NAMESPACE} <POD_NAME>:/
-
-# 在 Pod 内执行
-kubectl exec -n ${NAMESPACE} <POD_NAME> -- bash deploy.sh
-```
-
-## AI 行为
-
-**不自动执行**，只提供指引。
-
-告知用户：
-1. 复制脚本到 Pod 的命令
-2. 执行脚本的命令
-3. 等待 vLLM 启动完成
-
-## 等待确认
-
-AI 等待用户回复：
-- "部署成功" → 进入 Phase 12
-- "启动失败" → 进入错误处理
-
-## 错误处理
-
-| 场景 | 处理 |
-|------|------|
-| vLLM 启动失败 | 检查 vLLM 日志 |
-| 模型加载失败 | 检查模型路径 |
-| 分布式通信失败 | 检查网络和 MASTER_ADDR |
-
-## AI 执行指南
-
-1. 告知用户执行命令
-2. 等待用户确认部署状态
-3. 用户确认成功后进入 Phase 12
-```
-
-- [ ] **步骤 7：创建 output-guide.md**
-
-```markdown
-# Phase 12: 输出交付
-
-## 目标
-
-汇总最终输出，生成 README.md 执行指南。
-
-## 输入
-
-所有生成的文件和部署结果。
-
-## 输出目录
-
-```
-.vllm-deploy/
-├── k8s/
-│   ├── namespace.yaml
-│   ├── configmap.yaml
-│   ├── deployment-node*.yaml
-│   ├── service.yaml
-│   ├── apply-all.sh
-│   ├── deploy.sh
-│   └── README.md
-├── config.json
-├── detection-result.json
-├── image-info.json
-└── final-output.json
-```
-
-## README.md 内容
-
-```markdown
-# vLLM 部署执行指南
-
-## 访问信息
-
-- Service NodePort: ${SERVICE_PORT}
-- Namespace: ${NAMESPACE}
-
-## 已执行步骤
-
-1. K8s YAML 已 apply
-2. Pod 已启动
-3. vLLM serve 已运行
-
-## 测试服务
-
-curl http://<NODE_IP>:${SERVICE_PORT}/v1/models
-```
-
-## final-output.json
-
-```json
-{
-  "namespace": "vllm-glm5",
-  "service_port": 30080,
-  "nodes": ["node-1", "node-2"],
-  "model": "GLM-5",
-  "deploy_time": "2026-05-14T10:00:00Z"
-}
-```
-
-## AI 执行指南
-
-1. 生成 k8s/README.md
-2. 生成 final-output.json
-3. 展示最终访问信息
-4. 告知用户部署完成
-```
-
-- [ ] **步骤 8：Commit**
-
-```bash
-git add skill-execute/modules/
-git commit -m "feat(skill-execute): add 7 module guides for Phase 4-12"
-```
-
----
-
-## 任务 7：Skill 2 辅助脚本
-
-**文件：**
-- 创建：`skill-execute/scripts/detect-k8s-env.sh`
-- 创建：`skill-execute/scripts/detect-container-npu.sh`
-- 创建：`skill-execute/scripts/fill-template.sh`
-
-- [ ] **步骤 1：创建 detect-k8s-env.sh**
-
-```bash
-#!/bin/bash
-# Phase 4: 探测 K8s 环境和节点 NPU 信息
-
-set -e
-
-echo "Checking kubectl availability..."
-if ! command -v kubectl &> /dev/null; then
-    echo '{"kubectl_available": false, "cluster_connected": false}'
-    exit 1
-fi
-
-echo '{"kubectl_available": true'
-
-# 检查集群连接
-if ! kubectl cluster-info &> /dev/null; then
-    echo ', "cluster_connected": false}'
-    exit 1
-fi
-
-echo ', "cluster_connected": true'
-
-# 获取节点列表
-echo ', "nodes": ['
-
-NODES=$(kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
-FIRST=true
-
-for NODE in $NODES; do
-    # 获取节点 IP
-    IP=$(kubectl get node "$NODE" -o jsonpath='{.status.addresses[?(@.type=="InternalIP")].address}')
-    
-    # 获取 NPU 数量（通过 davinci 资源）
-    NPU_COUNT=$(kubectl describe node "$NODE" | grep -A 5 "Capacity:" | grep "davinci" | awk '{print $2}' || echo "0")
-    
-    # 判断硬件规格
-    if [ "$NPU_COUNT" -ge 16 ]; then
-        HW_SPEC="A3"
-    elif [ "$NPU_COUNT" -ge 8 ]; then
-        HW_SPEC="A2"
-    else
-        HW_SPEC="Unknown"
-    fi
-    
-    if [ "$FIRST" = true ]; then
-        FIRST=false
-    else
-        echo ','
-    fi
-    
-    echo "{\"name\": \"$NODE\", \"ip\": \"$IP\", \"npu_count\": $NPU_COUNT, \"hw_spec\": \"$HW_SPEC\"}"
-done
-
-echo ']'
-
-# 推荐节点（NPU 数量最多的）
-RECOMMENDED=$(kubectl get nodes -o json | jq -r '[.items[] | select(.status.capacity.davinci != null) | {name: .metadata.name, count: (.status.capacity.davinci | tonumber)}] | sort_by(-.count) | .[0:2] | .[].name' 2>/dev/null || echo "")
-
-echo ', "recommended_nodes": ['
-
-FIRST=true
-for NODE in $RECOMMENDED; do
-    if [ -n "$NODE" ]; then
-        if [ "$FIRST" = true ]; then
-            FIRST=false
-        else
-            echo ','
-        fi
-        echo "\"$NODE\""
-    fi
-done
-
-echo ']}'
-```
-
-- [ ] **步骤 2：创建 detect-container-npu.sh**
-
-```bash
-#!/bin/bash
-# Phase 9: 在 Pod 内探测 NPU 设备
-
-set -e
-
-usage() {
-    echo "Usage: $0 --pod <POD_NAME> --namespace <NAMESPACE>"
-    exit 1
-}
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --pod) POD="$2"; shift 2 ;;
-        --namespace) NAMESPACE="$2"; shift 2 ;;
-        *) usage ;;
-    esac
-done
-
-if [ -z "$POD" ] || [ -z "$NAMESPACE" ]; then
-    usage
-fi
-
-echo "Detecting NPU in pod: $POD (namespace: $NAMESPACE)"
-
-# 在 Pod 内执行 npu-smi
-NPU_INFO=$(kubectl exec -n "$NAMESPACE" "$POD" -- npu-smi info 2>/dev/null || echo "npu-smi not available")
-
-# 统计 NPU 设备数量
-NPU_COUNT=$(kubectl exec -n "$NAMESPACE" "$POD" -- ls /dev | grep -c "davinci" 2>/dev/null || echo "0")
-
-# 列出设备
-DEVICES=$(kubectl exec -n "$NAMESPACE" "$POD" -- ls /dev | grep "davinci" | tr '\n' ',' | sed 's/,$//')
-
-cat <<EOF
-{
-  "pod_name": "$POD",
-  "namespace": "$NAMESPACE",
-  "container_npu_count": $NPU_COUNT,
-  "devices_mapped": [$DEVICES]
-}
-EOF
-```
-
-- [ ] **步骤 3：创建 fill-template.sh**
-
-```bash
-#!/bin/bash
-# Phase 7补: 填充模板生成最终 YAML
-
-set -e
-
-usage() {
-    echo "Usage: $0 --config <config.json> --detection <detection.json> --templates <dir> --output <dir>"
-    exit 1
-}
-
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        --config) CONFIG="$2"; shift 2 ;;
-        --detection) DETECTION="$2"; shift 2 ;;
-        --templates) TEMPLATES="$2"; shift 2 ;;
-        --output) OUTPUT="$2"; shift 2 ;;
-        *) usage ;;
-    esac
-done
-
-if [ -z "$CONFIG" ] || [ -z "$DETECTION" ] || [ -z "$TEMPLATES" ] || [ -z "$OUTPUT" ]; then
-    usage
-fi
-
-mkdir -p "$OUTPUT"
-
-# 读取配置参数（假设使用 jq）
-NAMESPACE=$(jq -r '.namespace' "$CONFIG")
-MODEL_PATH=$(jq -r '.model_path' "$CONFIG")
-MAX_MODEL_LEN=$(jq -r '.max_model_len' "$CONFIG")
-MAX_NUM_SEQS=$(jq -r '.max_num_seqs' "$CONFIG")
-TENSOR_PARALLEL_SIZE=$(jq -r '.tensor_parallel_size' "$CONFIG")
-IMAGE=$(jq -r '.target_image' "$CONFIG")
-MODEL_NAME=$(jq -r '.selected_model' "$CONFIG")
-
-# 读取探测结果
-NODES=$(jq -r '.nodes[].name' "$DETECTION")
-NPU_RESOURCE_TYPE="davinci"  # 或 huawei.com/Ascend910
-
-# 填充 namespace.yaml
-sed -e "s/\${NAMESPACE}/$NAMESPACE/g" \
-    -e "s/\${MODEL_NAME}/$MODEL_NAME/g" \
-    "$TEMPLATES/k8s-namespace.yaml" > "$OUTPUT/namespace.yaml"
-
-# 填充 configmap.yaml
-sed -e "s/\${NAMESPACE}/$NAMESPACE/g" \
-    -e "s/\${MODEL_PATH}/$MODEL_PATH/g" \
-    -e "s/\${MAX_MODEL_LEN}/$MAX_MODEL_LEN/g" \
-    -e "s/\${MAX_NUM_SEQS}/$MAX_NUM_SEQS/g" \
-    -e "s/\${TENSOR_PARALLEL_SIZE}/$TENSOR_PARALLEL_SIZE/g" \
-    "$TEMPLATES/k8s-configmap.yaml" > "$OUTPUT/configmap.yaml"
-
-# 为每个节点填充 deployment
-NODE_INDEX=0
-for NODE in $NODES; do
-    NPU_COUNT=$(jq -r ".nodes[] | select(.name == \"$NODE\") | .npu_count" "$DETECTION")
-    
-    sed -e "s/\${NODE_NAME}/$NODE/g" \
-        -e "s/\${NAMESPACE}/$NAMESPACE/g" \
-        -e "s/\${IMAGE}/$IMAGE/g" \
-        -e "s/\${NPU_RESOURCE_TYPE}/$NPU_RESOURCE_TYPE/g" \
-        -e "s/\${NPU_COUNT}/$NPU_COUNT/g" \
-        -e "s/\${MODEL_MOUNT_PATH}/\/data/g" \
-        -e "s/\${MODEL_PATH_HOST}/$MODEL_PATH/g" \
-        "$TEMPLATES/k8s-deployment.yaml.template" > "$OUTPUT/deployment-$NODE.yaml"
-    
-    NODE_INDEX=$((NODE_INDEX + 1))
-done
-
-# 填充 service.yaml
-SERVICE_PORT=$((30000 + RANDOM % 1000))
-sed -e "s/\${NAMESPACE}/$NAMESPACE/g" \
-    -e "s/\${SERVICE_PORT}/$SERVICE_PORT/g" \
-    "$TEMPLATES/k8s-service.yaml" > "$OUTPUT/service.yaml"
-
-# 填充 apply-all.sh
-sed -e "s/\${NAMESPACE}/$NAMESPACE/g" \
-    "$TEMPLATES/apply-all.sh.template" > "$OUTPUT/apply-all.sh"
-
-chmod +x "$OUTPUT/apply-all.sh"
-
-echo "Generated files in $OUTPUT:"
-ls -la "$OUTPUT"
-```
-
-- [ ] **步骤 4：Commit**
-
-```bash
-git add skill-execute/scripts/
-git commit -m "feat(skill-execute): add helper scripts for Phase 4, 7, 9"
-```
-
----
-
-## 任务 8：最终验证和总结
+## 任务 7：最终验证
 
 - [ ] **步骤 1：验证文件完整性**
 
 ```bash
-find skill-prepare skill-execute -type f | wc -l
-# 预期：28 个文件
+find vllm-deploy-prepare -type f | wc -l
+# 预期：新增 6 个脚本文件 + 1 个模块文件
 ```
 
-- [ ] **步骤 2：检查脚本可执行性**
+- [ ] **步骤 2：验证脚本可执行**
 
 ```bash
-chmod +x skill-prepare/scripts/*.sh skill-execute/scripts/*.sh
-ls -la skill-prepare/scripts/ skill-execute/scripts/
+ls -la vllm-deploy-prepare/scripts/*.sh
+# 预期：所有 .sh 文件有 -rwxr-xr-x 权限
 ```
 
-- [ ] **步骤 3：更新 README.md**
-
-添加 Skill 使用说明到项目 README.md。
-
-- [ ] **步骤 4：最终 Commit**
+- [ ] **步骤 3：最终 Commit**
 
 ```bash
 git add -A
-git commit -m "feat: complete vLLM-Deploy Skill with prepare and execute phases"
+git commit -m "feat(skill-prepare): complete startup scripts integration with placeholder support for Skill 2"
 ```
 
 ---
 
-## 执行说明
+## 占位符填充流程说明
 
-此计划设计为 **手动执行模式**：
+**Skill 1 阶段（准备）**：
+- 已知参数（用户输入）：直接填充实际值
+- 未知参数（需探测）：保留 `${VAR_PLACEHOLDER}` 占位符
 
-1. 每完成一个任务（T1-T7），等待用户确认后再继续
-2. 用户可以检查生成的文件，提出修改建议
-3. 任务 8 为最终验证，确保所有文件完整
+**Skill 2 阶段（执行）**：
+- K8s 环境探测后填充：
+  - `${NODE_IP_PLACEHOLDER}` → 实际节点 IP
+  - `${WORLD_SIZE_PLACEHOLDER}` → 实际节点数量
+  - `${MASTER_ADDR_PLACEHOLDER}` → Master 节点 IP
+- 生成最终可执行的脚本
 
-**开始执行时，请告知我执行任务 1。**
+---
+
+## 文件清单汇总
+
+| 类别 | 文件 | 状态 |
+|------|------|------|
+| 脚本 | `scripts/start-single-node.sh` | 新增 |
+| 脚本 | `scripts/start-multi-node-master.sh` | 新增 |
+| 脚本 | `scripts/start-multi-node-worker.sh` | 新增 |
+| 脚本 | `scripts/start-prefill.sh` | 新增 |
+| 脚本 | `scripts/start-decode.sh` | 新增 |
+| 模块 | `modules/deploy-script-generator.md` | 新增 |
+| 入口 | `SKILL.md` | 修改 |
+
+**新增 7 个文件，总计 Skill 1 将有 23 个文件。**
