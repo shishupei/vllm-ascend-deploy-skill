@@ -1,169 +1,197 @@
-# vLLM-Deploy Skill 设计规格
+# vLLM-Deploy Skill 设计说明
 
-## 概述
+## 目标
 
-vLLM-Deploy Skill 是一个自动化部署工具，帮助 DevOps 工程师在 K8s 环境部署 vLLM 模型到 Ascend NPU。技能从 vLLM-Ascend 文档自动提取部署脚本，根据 K8s 环境自动修改参数，生成一键执行的 K8s YAML。
+以当前的 [README.md](/home/shishupei/app/vllm-skill/README.md) 作为唯一事实来源，重建 `vllm-deploy` skill 包，并确保该 skill 同时可被 Codex 和 Claude Code 使用。
 
-**执行环境：** K8s 管理节点（需有 kubectl 和集群管理权限）
+## 范围
 
-**目标用户：** DevOps 工程师
+本设计覆盖 README 中描述的整套 skill 产物：
 
-**交互方式：** 混合式 - 对话收集配置，生成文件后用户手动执行脚本
+- Skill 入口文档与元数据
+- 按 Phase 划分的模块说明文档
+- 辅助 shell 脚本
+- 用于生成部署产物的 YAML 与 shell 模板
 
----
+本次工作不做以下扩展：
 
-## 文件结构
+- 不添加超出 README 的新行为
+- 不引入新的运行时依赖
+- 不为了“生产级网页抓取”去扩展复杂实现，只提供可靠的最小 shell 方案
 
-```
-vllm-skill/
-├── skill.md                    # Skill 入口
-├── skill.yaml                  # Skill 元数据
-├── modules/
-│   ├── model-list-fetcher.md        # Phase 1: 抓取模型列表
-│   ├── user-selector.md             # Phase 2: 用户选择
-│   ├── doc-parser.md                # Phase 3: 针对性文档解析
-│   ├── k8s-env-detector.md          # Phase 4: K8s 环境探测
-│   ├── image-handler.md             # Phase 5: 镜像处理
-│   ├── config-guide.md              # Phase 6: 交互配置
-│   ├── k8s-yaml-generator.md        # Phase 7: 生成 K8s YAML
-│   ├── container-env-detector.md    # Phase 9: 容器内环境探测
-│   ├── deploy-generator.md          # Phase 10: 生成部署脚本
-│   └── output-guide.md              # Phase 12: 输出交付
-├── scripts/
-│   ├── fetch-model-list.sh          # 抓取模型列表脚本
-│   ├── parse-model-doc.sh           # 解析模型文档脚本
-│   ├── detect-k8s-env.sh            # K8s 环境探测脚本
-│   ├── detect-container-npu.sh      # 容器内 NPU 探测脚本
-│   └── push-image.sh                # 镜像处理脚本
-└── templates/
-    ├── k8s-namespace.yaml            # Namespace 模板
-    ├── k8s-configmap.yaml            # ConfigMap 模板
-    ├── k8s-deployment.yaml           # Deployment 模板
-    ├── k8s-service.yaml              # Service 模板
-    ├── deploy.sh                     # vllm serve 部署脚本模板
-    └── apply-all.sh                  # K8s 一键 apply 脚本模板
-```
+## 交付物
 
----
+重建后的包将包含以下内容：
 
-## Skill 入口设计
+- `SKILL.md`，作为跨 agent 的主入口
+- `skill.md` 和 `skill.yaml`，用于兼容 README 中约定的结构
+- `modules/` 目录，包含 12 个 phase 指南文件
+- `scripts/` 目录，包含 5 个可执行 shell 辅助脚本
+- `templates/` 目录，包含 6 个模板文件
+- `docs/superpowers/plans/` 目录下的实现计划文档，在本设计获批后创建
 
-### skill.yaml
+## 架构
 
-```yaml
-name: vllm-deploy
-description: Use when deploying vLLM models on K8s with Ascend NPU. Automates model selection, doc parsing, K8s env detection, image handling, and generates deployment YAML files.
-```
+整个 skill 包分为四层。
 
-### skill.md
+### 1. 入口层
 
-- 触发流程启动，进入 Phase 1
-- 调用 `modules/model-list-fetcher.md` 获取模型列表
-- 只做流程引导，不包含具体实现细节
+入口层负责让 skill 能被不同 agent 运行时发现和理解。
 
----
+- `SKILL.md` 是面向 Codex 风格 skill 加载方式的主入口。
+- `skill.md` 保留与 README 一致的操作说明，兼容文档和可能依赖该命名的环境。
+- `skill.yaml` 提供最小元数据，保持与 README 目录结构一致。
 
-## 模块设计
+入口内容需要明确说明：
 
-每个模块包含：概述、输入参数、处理步骤、输出结果、调用的脚本（如有）、错误处理
+- 什么时候使用该 skill
+- 需要什么执行环境
+- 12 个 phase 的完整流程
+- 每个 phase 会用到哪些模块、脚本和模板
+- 哪些动作需要用户确认，例如 `kubectl apply` 和容器内部署脚本执行
 
-### 模块职责划分
+### 2. 模块层
 
-| 模块 | 职责 | 是否调用脚本 |
-|------|------|-------------|
-| model-list-fetcher.md | Phase 1: 抓取文档站点，提取模型列表 | ✅ fetch-model-list.sh |
-| user-selector.md | Phase 2: AskUserQuestion 让用户选择模型/规格/部署方式/镜像仓库 | ❌ 纯对话 |
-| doc-parser.md | Phase 3: 抓取选定模型页面，解析脚本和镜像版本 | ✅ parse-model-doc.sh |
-| k8s-env-detector.md | Phase 4: kubectl 探测节点、IP、NPU 数量 | ✅ detect-k8s-env.sh |
-| image-handler.md | Phase 5: SSH 远程执行 docker 操作，用户交互输入账密 | ✅ push-image.sh |
-| config-guide.md | Phase 6: AskUserQuestion 收集配置参数 | ❌ 纯对话 |
-| k8s-yaml-generator.md | Phase 7: 根据模板生成 YAML 文件 | ❌ 纯文本生成 |
-| container-env-detector.md | Phase 9: kubectl exec 探测 Pod 内 NPU | ✅ detect-container-npu.sh |
-| deploy-generator.md | Phase 10: 根据探测结果生成 vllm serve 脚本 | ❌ 纯文本生成 |
-| output-guide.md | Phase 12: 整理输出目录，生成 README | ❌ 纯文件操作 |
+`modules/` 下每个文件对应 README 中的一个 phase。12 个模块文件统一采用相同结构，便于 agent 连续消费：
 
----
+- 目的
+- 输入
+- 执行位置
+- 步骤
+- 输出
+- 失败处理
+- 关联脚本或模板
 
-## 脚本设计
+这样既能保持 skill 的可读性，也能严格保留 README 中定义的 phase 顺序：
 
-每个脚本包含：脚本头部、参数说明、输出格式（JSON）、错误处理（非零退出码）
+1. `model-list-fetcher.md`
+2. `user-selector.md`
+3. `doc-parser.md`
+4. `k8s-env-detector.md`
+5. `image-handler.md`
+6. `config-guide.md`
+7. `k8s-yaml-generator.md`
+8. `k8s-apply-guide.md`
+9. `container-env-detector.md`
+10. `deploy-generator.md`
+11. `deploy-execution-guide.md`
+12. `output-guide.md`
 
-### 脚本职责
+### 3. 脚本层
 
-| 脚本 | 输入 | 输出 | 执行位置 |
-|------|------|------|---------|
-| fetch-model-list.sh | 默认 URL（可覆盖） | JSON：模型名和链接数组 | 本地 curl |
-| parse-model-doc.sh | 模型 URL + 规格 + 部署方式 | 提取的脚本内容 + 镜像版本 | 本地 curl + 解析 |
-| detect-k8s-env.sh | 无 | JSON：节点信息、NPU 数量、推荐节点 | K8s 管理节点 kubectl |
-| detect-container-npu.sh | Pod 名称 + Namespace | JSON：容器内 NPU 设备列表 | Pod 内 kubectl exec |
-| push-image.sh | 源镜像 + 目标仓库 + 远程节点 IP + 账密 | JSON：推送成功/失败状态 | SSH 远程执行 docker |
+`scripts/` 下每个脚本都是独立的 Bash CLI，统一具备以下特征：
 
----
+- 支持 `--help`
+- 显式参数校验
+- 失败时返回非 0 退出码
+- 输出结构化结果，便于 agent 消费
 
-## 模板设计
+脚本实现坚持“最小依赖、能明确失败”的原则。它们在常见 shell 工具存在时可以执行任务；当环境前置条件不满足时，需要给出清晰错误。
 
-使用 `${VAR_NAME}` 作为替换占位符
+各脚本的职责如下：
 
-### 模板内容
+- `fetch-model-list.sh`：抓取模型索引页，提取模型名称和链接
+- `parse-model-doc.sh`：抓取选定模型页面，提取部署脚本块、镜像引用和参数提示
+- `detect-k8s-env.sh`：探测集群连通性、节点列表、节点 IP 以及 NPU 相关信号
+- `detect-container-npu.sh`：探测目标 Pod 中映射的 NPU 设备并汇总结果
+- `push-image.sh`：校验镜像参数，并执行拉取、重打标签、推送到目标仓库
 
-| 模板 | 主要占位符 | 用途 |
-|------|-----------|------|
-| k8s-namespace.yaml | `${NAMESPACE}`、`${MODEL_NAME}` | 创建隔离空间 |
-| k8s-configmap.yaml | `${NAMESPACE}`、`${MODEL_PATH}`、`${MAX_MODEL_LEN}`、`${MAX_NUM_SEQS}`、`${TENSOR_PARALLEL_SIZE}` | 存储配置参数 |
-| k8s-deployment.yaml | `${NODE_NAME}`、`${NAMESPACE}`、`${IMAGE}`、`${NPU_RESOURCE_TYPE}`、`${NPU_COUNT}`、`${MODEL_MOUNT_PATH}`、`${MODEL_PATH_HOST}` | Pod 运行配置 |
-| k8s-service.yaml | `${NAMESPACE}`、`${SERVICE_PORT}` | NodePort 暴露服务 |
-| deploy.sh | `${MODEL_PATH}`、`${MAX_MODEL_LEN}`、`${MAX_NUM_SEQS}`、`${TENSOR_PARALLEL_SIZE}`、`${MASTER_ADDR}`、`${MASTER_PORT}`、`${RANK}` | Pod 内 vllm serve 命令 |
-| apply-all.sh | `${NAMESPACE}` | 按顺序 apply 所有 YAML |
+涉及网络访问或集群变更的步骤会保持显式表达。脚本本身可以执行 README 中描述的动作，但 skill 文档仍然保留 README 要求的用户确认节点。
 
----
+### 4. 模板层
 
-## 流程设计
+`templates/` 下的模板统一使用 `${VAR}` 占位符，并严格对应 README 中定义的替换参数。
 
-### 12 阶段流程
+模板集合如下：
 
-每个 phase 都需要用户手动确认才能继续下一步。
+- `k8s-namespace.yaml`
+- `k8s-configmap.yaml`
+- `k8s-deployment.yaml`
+- `k8s-service.yaml`
+- `deploy.sh`
+- `apply-all.sh`
 
-| 阶段 | 输出传递给 | 用户交互 |
-|------|-----------|---------|
-| Phase 1 | 模型列表 JSON | **展示结果，等待用户确认继续** |
-| Phase 1 → 2 | 模型列表 JSON | AskUserQuestion 选择模型/规格/部署方式 |
-| Phase 2 → 3 | 选择结果 | **展示选择，等待用户确认继续** |
-| Phase 3 → 4 | 脙本模板 + 镜像版本 | **展示解析结果，等待用户确认继续** |
-| Phase 4 → 5 | 节点信息 + 推荐节点 | **展示探测结果，等待用户确认继续** |
-| Phase 5 | 镜像推送结果 | AskUserQuestion：确认镜像地址、输入账密、选择远程节点 |
-| Phase 5 → 6 | 镜像推送结果 | **展示推送结果，等待用户确认继续** |
-| Phase 6 → 7 | 完整配置参数集 | AskUserQuestion 收集配置 |
-| Phase 7 → 8 | YAML 文件 + apply-all.sh | **展示生成文件，等待用户手动 kubectl apply** |
-| Phase 8 → 9 | 用户确认 Pod 启动 | **等待用户确认 Pod 已启动后继续** |
-| Phase 9 → 10 | 容器内 NPU 信息 | **展示探测结果，等待用户确认继续** |
-| Phase 10 → 11 | deploy.sh | **展示脚本内容，等待用户手动执行** |
-| Phase 11 → 12 | 用户确认部署完成 | **等待用户确认部署完成后继续** |
-| Phase 12 | 输出交付 | **展示最终交付文件，流程结束** |
+模板需要覆盖 README 中描述的三种部署模式：
 
----
+- 单节点
+- 多节点
+- PD 分离
 
-## 错误处理设计
+模式差异通过模板变量和生成说明表达，而不是拆成多套模板树，以保持包体结构稳定、可预测。
 
-| 场景 | 处理方式 | 处理模块 |
-|------|---------|---------|
-| 默认 URL 无法访问 | 提示检查网络，允许用户自定义 URL | model-list-fetcher.md |
-| 模型列表提取失败 | 建议用户手动指定模型教程 URL | model-list-fetcher.md |
-| 脙本块未找到 | 建议用户手动提供脚本内容 | doc-parser.md |
-| kubectl 不可用 | 提示安装 kubectl，中止流程 | k8s-env-detector.md |
-| 非管理节点执行 | 提示切换到管理节点，中止流程 | k8s-env-detector.md |
-| K8s 集群连接失败 | 提示检查 kubeconfig，中止流程 | k8s-env-detector.md |
-| Docker 不可用（远程节点） | 提示选择其他有 Docker 的节点 | image-handler.md |
-| 镜像仓库登录失败 | 提示检查账密，允许重新输入 | image-handler.md |
-| 镜像推送失败 | 提示检查权限和网络，允许重新尝试 | image-handler.md |
-| NPU 资源未注册 | 提示检查 Device Plugin，中止流程 | k8s-env-detector.md |
-| Pod 启动失败 | 提示检查镜像和资源，建议排查 | container-env-detector.md |
-| 容器内 NPU 映射异常 | 提示检查 Device Plugin 配置 | container-env-detector.md |
+## 兼容策略
 
----
+该 skill 需要在不破坏 README 既有目录结构的前提下，同时兼容 Codex 和 Claude Code 的使用方式。
 
-## 设计决策记录
+- `SKILL.md` 使用标准 skill frontmatter，并直接引用各模块文件。
+- `skill.md` 保留，作为 README 约定结构的兼容入口，并与主入口保持一致语义。
+- `skill.yaml` 提供简单元数据，兼容依赖独立 YAML 描述的生态。
 
-1. **执行环境：** 严格在 K8s 管理节点执行
-2. **镜像处理：** 需要远程执行（SSH 到有 Docker 的节点）
-3. **文档站点：** 默认 URL `https://docs.vllm.com.cn/projects/ascend/` 稳定可用
-4. **用户交互：** 每个 phase 都需要用户手动确认才能继续
+三份文件在语义上保持一致，但 `SKILL.md` 作为 agent 执行指引的主来源。
+
+## 运行边界
+
+该 skill 的目标运行位置是具备集群访问能力的 Kubernetes 管理节点。文档中需要明确以下前置条件：
+
+- 集群探测和工作负载操作依赖 `kubectl`
+- 镜像处理依赖 Docker
+- 某些路径必须保留人工确认或人工执行，尤其是应用 YAML 和在 Pod 内执行最终部署脚本
+
+重建后的 skill 必须保留 README 的阶段式交互模型，不能把这些用户确认节点静默吞掉。
+
+## 错误处理
+
+README 已经定义了主要失败场景。重建后的包要在两个层面保留这些约束：
+
+- 模块文档负责说明 agent 在每类失败下应该如何响应
+- 脚本负责对缺失工具、缺失参数、连接失败、解析失败或不支持状态返回清晰错误
+
+这样文档和脚本的职责是闭环的：文档给流程决策，脚本给执行信号。
+
+## 测试策略
+
+本次重建至少在三个层面做验证。
+
+### 文档结构
+
+验证预期文件是否存在，以及 phase 映射是否与 README 完全一致。
+
+### 脚本接口
+
+验证每个脚本都满足：
+
+- 具有可执行权限
+- `--help` 能输出用法
+- 缺失必填参数时会以非 0 退出
+
+### 模板完整性
+
+验证每个模板文件都存在，并且包含 README 为该模板定义的关键占位符。
+
+## 非目标
+
+本次重建不会做以下事情：
+
+- 不增加 Python 或第三方解析依赖
+- 不承诺完美解析所有上游文档格式
+- 不引入 README 之外的新 phase 或替代流程
+- 不把 skill 包改造成一个脱离 skill 结构的独立应用
+
+## 实施说明
+
+当前仓库只保留了 README，而此前已被 git 跟踪的实现文件在工作树中已删除。因此“从头重建”意味着：
+
+- 保留 git 已有的目录布局
+- 不把旧实现内容当作事实来源
+- 以 README 和本设计文档作为所有重建文件的规格来源
+
+## 成功标准
+
+当满足以下条件时，可认为本设计被正确实现：
+
+- 仓库中重新具备 README 描述的完整文件集合
+- skill 入口可同时被 Codex 和 Claude Code 使用
+- 12 个 phase 都有清晰、可消费的模块说明
+- 5 个脚本都暴露出可用的 CLI 接口
+- 6 个模板都包含与 README 对齐的占位符
+- 整个包读起来是完整、可执行的 skill，而不是半成品脚手架
