@@ -16,25 +16,27 @@ if [ -z "$HTML" ]; then
     exit 1
 fi
 
-# 提取模型链接（假设链接格式为 tutorials/models/*.html）
-# 使用 grep 和 sed 提取
-MODELS=$(echo "$HTML" | grep -oP 'tutorials/models/[A-Za-z0-9_-]+\.html' | sort -u)
+# 提取模型链接（使用 sed 替代 grep -oP 以兼容 macOS）
+MODELS=$(echo "$HTML" | sed -n 's/.*tutorials\/models\/\([A-Za-z0-9_-]*\)\.html.*/\1.html/p' | sort -u)
 
-# 构建 JSON 输出
-echo '{"models": ['
-
-FIRST=true
-while IFS= read -r url; do
-    # 提取模型名称（去掉 .html 后缀）
-    NAME=$(basename "$url" .html)
-
-    if [ "$FIRST" = true ]; then
-        FIRST=false
-    else
-        echo ','
-    fi
-
-    echo "{\"name\": \"$NAME\", \"url\": \"$url\"}"
-done <<< "$MODELS"
-
-echo ']}'
+# 构建 JSON 输出（使用 jq 或正确拼接）
+if command -v jq &> /dev/null; then
+    # 使用 jq 构建 JSON
+    echo "$MODELS" | jq -R -s 'split("\n") | map(select(length > 0)) | map({name: . | sub(".html$"; ""), url: .}) | {models: .}'
+else
+    # 手动构建 JSON
+    echo '{"models": ['
+    FIRST=true
+    while IFS= read -r url; do
+        if [ -n "$url" ]; then
+            NAME=$(basename "$url" .html)
+            if [ "$FIRST" = true ]; then
+                FIRST=false
+            else
+                echo ','
+            fi
+            printf '{"name": "%s", "url": "%s"}' "$NAME" "$url"
+        fi
+    done <<< "$MODELS"
+    echo ']}'
+fi
