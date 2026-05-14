@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-deploy-${NODE_NAME}
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-deploy
+      node: ${NODE_NAME}
+  template:
+    metadata:
+      labels:
+        app: vllm-deploy
+        node: ${NODE_NAME}
+    spec:
+      nodeName: ${NODE_NAME}
+      containers:
+      - name: vllm
+        image: ${IMAGE}
+        command: ["sleep", "infinity"]
+        resources:
+          limits:
+            ${NPU_RESOURCE_TYPE}: ${NPU_COUNT}
+          requests:
+            ${NPU_RESOURCE_TYPE}: ${NPU_COUNT}
+        volumeMounts:
+        - name: model-storage
+          mountPath: ${MODEL_MOUNT_PATH}
+        - name: dev-mount
+          mountPath: /dev
+        - name: sys-mount
+          mountPath: /sys
+      volumes:
+      - name: model-storage
+        hostPath:
+          path: ${MODEL_PATH_HOST}
+          type: Directory
+      - name: dev-mount
+        hostPath:
+          path: /dev
+      - name: sys-mount
+        hostPath:
+          path: /sys

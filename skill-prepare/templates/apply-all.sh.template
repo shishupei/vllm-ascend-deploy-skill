@@ -1,0 +1,25 @@
+#!/bin/bash
+# 一键 apply 所有 K8s YAML 文件
+
+set -e
+
+NAMESPACE="${NAMESPACE}"
+
+echo "Applying K8s resources to namespace: $NAMESPACE"
+
+kubectl apply -f namespace.yaml
+kubectl apply -f configmap.yaml
+
+# Apply all deployment files
+for deploy in deployment-*.yaml; do
+    kubectl apply -f "$deploy"
+done
+
+kubectl apply -f service.yaml
+
+echo "Waiting for pods to be ready..."
+kubectl wait --for=condition=Ready pods -l app=vllm-deploy -n "$NAMESPACE" --timeout=300s
+
+echo "All pods are ready!"
+echo "Service NodePort:"
+kubectl get svc vllm-service -n "$NAMESPACE" -o jsonpath='{.spec.ports[0].nodePort}'

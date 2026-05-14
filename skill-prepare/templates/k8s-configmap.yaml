@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-config
+  namespace: ${NAMESPACE}
+data:
+  MODEL_PATH: "${MODEL_PATH}"
+  MAX_MODEL_LEN: "${MAX_MODEL_LEN}"
+  MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
+  TENSOR_PARALLEL_SIZE: "${TENSOR_PARALLEL_SIZE}"
