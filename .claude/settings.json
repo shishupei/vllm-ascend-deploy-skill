@@ -32,10 +32,12 @@
       "Bash(mkdir -p ~/.claude/skills)",
       "Bash(cp -r vllm-deploy-prepare ~/.claude/skills/)",
       "Edit(~/.claude/skills/vllm-deploy-prepare/**)",
-      "Bash(rm ~/.claude/skills/vllm-deploy-prepare/skill.md ~/.claude/skills/vllm-deploy-prepare/skill.yaml && ls -la ~/.claude/skills/vllm-deploy-prepare/)"
+      "Bash(rm ~/.claude/skills/vllm-deploy-prepare/skill.md ~/.claude/skills/vllm-deploy-prepare/skill.yaml && ls -la ~/.claude/skills/vllm-deploy-prepare/)",
+      "Bash(cp /home/shishupei/app/vllm-skill/vllm-deploy-prepare/modules/user-selector.md ~/.claude/skills/vllm-deploy-prepare/modules/user-selector.md)"
     ],
     "additionalDirectories": [
-      "/home/shishupei/.claude/skills/vllm-deploy-prepare"
+      "/home/shishupei/.claude/skills/vllm-deploy-prepare",
+      "/home/shishupei/.claude/skills/vllm-deploy-prepare/modules"
     ]
   }
 }
