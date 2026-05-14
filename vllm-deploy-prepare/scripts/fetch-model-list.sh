@@ -16,8 +16,9 @@ if [ -z "$HTML" ]; then
     exit 1
 fi
 
-# 提取模型链接（使用 sed 替代 grep -oP 以兼容 macOS）
-MODELS=$(echo "$HTML" | sed -n 's/.*tutorials\/models\/\([A-Za-z0-9_-]*\)\.html.*/\1.html/p' | sort -u)
+# 提取模型链接（查找 toctree-l2 中的 reference internal 链接）
+# 页面格式：<li class="toctree-l2"><a class="reference internal" href="ModelName.html">
+MODELS=$(echo "$HTML" | grep 'class="reference internal" href=".*\.html"' | sed -n 's/.*href="\([A-Za-z0-9_.-]*\)\.html".*/\1.html/p' | grep -v "index.html" | grep -v "supported_models" | sort -u)
 
 # 构建 JSON 输出（使用 jq 或正确拼接）
 if command -v jq &> /dev/null; then
