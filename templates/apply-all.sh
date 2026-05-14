@@ -12,11 +12,11 @@ set -euo pipefail
 
 echo "Applying Kubernetes resources to namespace: ${NAMESPACE}"
 
-# Apply resources in order
-kubectl apply -f namespace.yaml
-kubectl apply -f configmap.yaml
-kubectl apply -f service.yaml
-kubectl apply -f deployment-node1.yaml
+# Apply resources in order (using actual template file names)
+kubectl apply -f k8s-namespace.yaml
+kubectl apply -f k8s-configmap.yaml
+kubectl apply -f k8s-service.yaml
+kubectl apply -f k8s-deployment.yaml
 
 echo "Waiting for pods to become ready in namespace: ${NAMESPACE}"
 kubectl wait --for=condition=ready pods -l "app.kubernetes.io/name=${MODEL_NAME}" -n "${NAMESPACE}" --timeout=300s
