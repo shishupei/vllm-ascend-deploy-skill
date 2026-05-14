@@ -1,2 +1,0 @@
-name: vllm-deploy
-description: Use when deploying vLLM-Ascend models on Kubernetes and you need a phase-based skill that fetches docs, inspects the cluster, prepares images, generates manifests, and produces a final deploy script

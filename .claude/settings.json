@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "*",
+      "Bash(*)",
+      "Skill(using-superpowers)",
+      "Skill(using-superpowers:*)",
+      "Skill(subagent-driven-development)",
+      "Skill(subagent-driven-development:*)",
+      "Skill(using-git-worktrees)",
+      "Skill(using-git-worktrees:*)",
+      "Skill(writing-skills)",
+      "Skill(writing-skills:*)",
+      "Bash(echo \"SKILL.md: exit=$?\")",
+      "Bash(echo \"skill.md: exit=$?\")",
+      "Bash(echo \"skill.yaml: exit=$?\")",
+      "Bash(echo \"modules/model-list-fetcher.md: exit=$?\")",
+      "Bash(echo \"scripts/fetch-model-list.sh: exit=$?\")",
+      "Bash(echo \"modules directory: exit=$?\")",
+      "Bash(echo \"scripts directory: exit=$?\")",
+      "Bash(echo \"templates directory: exit=$?\")",
+      "Bash(echo \"docs/superpowers/specs directory: exit=$?\")",
+      "Bash(echo \"docs/superpowers/plans directory: exit=$?\")",
+      "Bash(echo \"SKILL.md missing \\(expected non-zero\\): exit=$?\")",
+      "Bash(rg -n '^---$|^name: vllm-deploy$|^description: Use when' SKILL.md)",
+      "Bash(rg -n '^name: vllm-deploy$|^description:' skill.yaml)",
+      "Bash(rg -n '^name: vllm-deploy$|^description:' /home/shishupei/app/vllm-skill/skill.yaml)",
+      "Skill(brainstorming)",
+      "Skill(brainstorming:*)",
+      "Skill(writing-plans)",
+      "Skill(writing-plans:*)",
+      "Bash(mkdir -p ~/.claude/skills)",
+      "Bash(cp -r vllm-deploy-prepare ~/.claude/skills/)"
+    ]
+  }
+}
