@@ -1,0 +1,138 @@
+# 单机部署 - 标准 Kubernetes Deployment
+# 适用于单个节点部署 vLLM 推理服务
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-config
+  namespace: ${NAMESPACE}
+data:
+  MODEL_PATH: "${MODEL_PATH}"
+  MAX_MODEL_LEN: "${MAX_MODEL_LEN}"
+  MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
+  TENSOR_PARALLEL_SIZE: "${TENSOR_PARALLEL_SIZE}"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-${MODEL_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-deploy
+      model: ${MODEL_NAME}
+  progressDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: vllm-deploy
+        model: ${MODEL_NAME}
+    spec:
+      containers:
+      - name: vllm
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - vllm
+        - serve
+        - ${MODEL_PATH}
+        - --served-model-name
+        - ${MODEL_NAME}
+        - --tensor-parallel-size
+        - "${TENSOR_PARALLEL_SIZE}"
+        - --max-model-len
+        - "${MAX_MODEL_LEN}"
+        - --max-num-seqs
+        - "${MAX_NUM_SEQS}"
+        - --port
+        - "8000"
+        - --trust-remote-code
+        env:
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: HCCL_IF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
+        ports:
+        - name: http
+          containerPort: 8000
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 300
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: "${CPU_LIMIT}"
+            memory: "${MEMORY_LIMIT}"
+            ${NPU_RESOURCE_TYPE}: "${NPU_COUNT}"
+          requests:
+            cpu: "${CPU_REQUEST}"
+            memory: "${MEMORY_REQUEST}"
+            ${NPU_RESOURCE_TYPE}: "${NPU_COUNT}"
+        volumeMounts:
+        - name: model-storage
+          mountPath: ${MODEL_MOUNT_PATH}
+        - name: hccn-config
+          mountPath: /etc/hccn.conf
+          readOnly: true
+        - name: shared-memory
+          mountPath: /dev/shm
+      volumes:
+      - name: model-storage
+        hostPath:
+          path: ${MODEL_PATH_HOST}
+          type: Directory
+      - name: hccn-config
+        hostPath:
+          path: /etc/hccn.conf
+          type: File
+      - name: shared-memory
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  namespace: ${NAMESPACE}
+spec:
+  type: NodePort
+  selector:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    nodePort: ${SERVICE_PORT}

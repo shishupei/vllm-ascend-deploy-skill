@@ -37,7 +37,10 @@
       "WebFetch(domain:docs.vllm.ai)",
       "Bash(cp /home/shishupei/app/vllm-skill/vllm-deploy-prepare/modules/doc-parser.md ~/.claude/skills/vllm-deploy-prepare/modules/doc-parser.md)",
       "Bash(cp /home/shishupei/app/vllm-skill/vllm-deploy-prepare/scripts/fetch-k8s-config.sh ~/.claude/skills/vllm-deploy-prepare/scripts/fetch-k8s-config.sh)",
-      "Bash(chmod +x ~/.claude/skills/vllm-deploy-prepare/scripts/fetch-k8s-config.sh)"
+      "Bash(chmod +x ~/.claude/skills/vllm-deploy-prepare/scripts/fetch-k8s-config.sh)",
+      "mcp__github__search_code",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)"
     ],
     "additionalDirectories": [
       "/home/shishupei/.claude/skills/vllm-deploy-prepare",

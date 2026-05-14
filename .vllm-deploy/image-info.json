@@ -1,7 +1,0 @@
-{
-  "source_image": "quay.io/vllm-ascend/vllm-ascend:v0.17.0",
-  "target_image": "image.ssp.com/repo/vllm-ascend:v0.17.0",
-  "push_success": null,
-  "skipped": true,
-  "reason": "Docker not available in current environment"
-}
