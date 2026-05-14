@@ -1,4 +1,7 @@
-# vLLM-Deploy Prepare Skill
+---
+name: vllm-deploy-prepare
+description: vLLM-Ascend 部署准备 - 获取模型列表、解析文档、处理镜像、生成配置
+---
 
 vLLM-Ascend 部署准备阶段，在任意有网络的环境执行。
 

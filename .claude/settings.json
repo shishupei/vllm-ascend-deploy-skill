@@ -30,7 +30,12 @@
       "Skill(writing-plans)",
       "Skill(writing-plans:*)",
       "Bash(mkdir -p ~/.claude/skills)",
-      "Bash(cp -r vllm-deploy-prepare ~/.claude/skills/)"
+      "Bash(cp -r vllm-deploy-prepare ~/.claude/skills/)",
+      "Edit(~/.claude/skills/vllm-deploy-prepare/**)",
+      "Bash(rm ~/.claude/skills/vllm-deploy-prepare/skill.md ~/.claude/skills/vllm-deploy-prepare/skill.yaml && ls -la ~/.claude/skills/vllm-deploy-prepare/)"
+    ],
+    "additionalDirectories": [
+      "/home/shishupei/.claude/skills/vllm-deploy-prepare"
     ]
   }
 }
