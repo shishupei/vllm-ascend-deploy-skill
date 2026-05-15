@@ -6,7 +6,7 @@ set -e
 DEFAULT_URL="https://docs.vllm.com.cn/projects/ascend/en/latest/tutorials/models/index.html"
 URL="${1:-$DEFAULT_URL}"
 
-echo "Fetching model list from: $URL"
+echo "Fetching model list from: $URL" >&2
 
 # 抓取页面 HTML
 HTML=$(curl -sL "$URL" 2>/dev/null || wget -qO- "$URL" 2>/dev/null)
