@@ -93,15 +93,76 @@ case "$DEPLOY_MODE" in
         MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip' "$DETECTION_FILE")
         NPU_COUNT_PER_NODE=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .npu_count // 8' "$DETECTION_FILE")
 
-        fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/all.yaml" \
+        # 生成 master YAML
+        fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/master.yaml" \
             "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
              -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
              -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
-             -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g"
+             -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
+             -e s|\${WORKER_RANK}|0|g \
+             -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
+             -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
+
+        # 为每个 worker 生成独立 YAML
+        WORKER_INDEX=1
+        for worker_node in $(jq -r '.recommended_nodes[1:][]' "$DETECTION_FILE"); do
+            WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$worker_node'") | .ip' "$DETECTION_FILE")
+            fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
+                "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
+                 -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
+                 -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
+                 -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
+                 -e s|\${WORKER_RANK}|${WORKER_INDEX}|g \
+                 -e s|\${WORKER_NODE_NAME}|${worker_node}|g \
+                 -e s|\${WORKER_NODE_IP}|${WORKER_IP}|g"
+            WORKER_INDEX=$((WORKER_INDEX + 1))
+        done
+
+        # 合并所有 YAML
+        cat "$OUTPUT_DIR/master.yaml" "$OUTPUT_DIR"/worker-*.yaml > "$OUTPUT_DIR/all.yaml"
+        ;;
+
+    pd_separate)
+        PREFILL_TP_SIZE=$(jq -r '.prefill_tp_size // 8' "$CONFIG_FILE")
+        DECODE_TP_SIZE=$(jq -r '.decode_tp_size // 8' "$CONFIG_FILE")
+        PREFILL_NPU_COUNT=$(jq -r '.prefill_npu_count // 8' "$CONFIG_FILE")
+        DECODE_NPU_COUNT=$(jq -r '.decode_npu_count // 8' "$CONFIG_FILE")
+        PREFILL_REPLICAS=$(jq -r '.prefill_replicas // 1' "$CONFIG_FILE")
+        DECODE_REPLICAS=$(jq -r '.decode_replicas // 1' "$CONFIG_FILE")
+        KV_CONNECTOR=$(jq -r '.kv_connector // "MooncakeConnectorV1"' "$CONFIG_FILE")
+        DECODE_MAX_BATCHED_TOKENS=$(jq -r '.decode_max_batched_tokens // 16384' "$CONFIG_FILE")
+
+        fill_template "$TEMPLATE_DIR/pd-separate.yaml" "$OUTPUT_DIR/all.yaml" \
+            "-e s|\${PREFILL_TP_SIZE}|${PREFILL_TP_SIZE}|g \
+             -e s|\${DECODE_TP_SIZE}|${DECODE_TP_SIZE}|g \
+             -e s|\${PREFILL_NPU_COUNT}|${PREFILL_NPU_COUNT}|g \
+             -e s|\${DECODE_NPU_COUNT}|${DECODE_NPU_COUNT}|g \
+             -e s|\${PREFILL_REPLICAS}|${PREFILL_REPLICAS}|g \
+             -e s|\${DECODE_REPLICAS}|${DECODE_REPLICAS}|g \
+             -e s|\${KV_CONNECTOR}|${KV_CONNECTOR}|g \
+             -e s|\${DECODE_MAX_BATCHED_TOKENS}|${DECODE_MAX_BATCHED_TOKENS}|g"
+        ;;
+
+    ha_active_standby)
+        HA_REPLICAS=$(jq -r '.ha_replicas // 2' "$CONFIG_FILE")
+        HA_MIN_REPLICAS=$(jq -r '.ha_min_replicas // 1' "$CONFIG_FILE")
+        HA_MAX_REPLICAS=$(jq -r '.ha_max_replicas // 4' "$CONFIG_FILE")
+        NPU_NODE_LABEL=$(jq -r '.npu_node_label // "npu.ascend.com/Ascend910"' "$CONFIG_FILE")
+        SELECTED_NODE=$(jq -r '.selected_nodes[0] // .recommended_nodes[0]' "$DETECTION_FILE")
+        NPU_COUNT=$(jq -r '.nodes[] | select(.name=="'$SELECTED_NODE'") | .npu_count // 8' "$DETECTION_FILE")
+
+        fill_template "$TEMPLATE_DIR/ha-active-standby.yaml" "$OUTPUT_DIR/all.yaml" \
+            "-e s|\${HA_REPLICAS}|${HA_REPLICAS}|g \
+             -e s|\${HA_MIN_REPLICAS}|${HA_MIN_REPLICAS}|g \
+             -e s|\${HA_MAX_REPLICAS}|${HA_MAX_REPLICAS}|g \
+             -e s|\${NPU_NODE_LABEL}|${NPU_NODE_LABEL}|g \
+             -e s|\${NPU_COUNT}|${NPU_COUNT}|g"
         ;;
 
     *)
-        echo "Warning: deploy_mode '$DEPLOY_MODE' may need additional configuration"
+        echo "Error: Unknown deploy_mode '$DEPLOY_MODE'" >&2
+        echo "Supported modes: single_node, multi_node, pd_separate, ha_active_standby" >&2
+        exit 1
         ;;
 esac
 
