@@ -28,6 +28,39 @@ data:
   MASTER_PORT: "${MASTER_PORT}"
 
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-scripts
+  namespace: ${NAMESPACE}
+data:
+  detect-npu.sh: |
+    #!/bin/bash
+    set -e
+    echo "=== Container NPU Detection ===" >&2
+    NPU_DEVICES=""
+    for i in $(seq 0 15); do
+      if [ -e "/dev/davinci$i" ]; then
+        NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
+      fi
+    done
+    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $NPU_COUNT" >&2
+    cat <<EOF
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+EOF
+  deploy.sh: |
+    #!/bin/bash
+    set -e
+    vllm serve ${MODEL_PATH} \
+      --served-model-name ${MODEL_NAME} \
+      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+      --max-model-len ${MAX_MODEL_LEN} \
+      --max-num-seqs ${MAX_NUM_SEQS} \
+      --port 8000 \
+      --trust-remote-code
+
+---
 # Master 节点 Deployment (Rank 0)
 apiVersion: apps/v1
 kind: Deployment
@@ -60,22 +93,13 @@ spec:
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
         command:
-        - vllm
-        - serve
-        - ${MODEL_PATH}
-        - --served-model-name
-        - ${MODEL_NAME}
-        - --tensor-parallel-size
-        - "${TENSOR_PARALLEL_SIZE}"
-        - --max-model-len
-        - "${MAX_MODEL_LEN}"
-        - --max-num-seqs
-        - "${MAX_NUM_SEQS}"
-        - --port
-        - "8000"
-        - --distributed-executor-backend
-        - ray
-        - --trust-remote-code
+        - /bin/bash
+        - -c
+        - |
+          # Ray 集群引导 - Master 节点启动 head
+          ray start --head --port=${MASTER_PORT}
+          # 启动 vLLM
+          /scripts/deploy.sh
         env:
         - name: HF_HUB_OFFLINE
           value: "1"
@@ -131,6 +155,9 @@ spec:
           readOnly: true
         - name: shared-memory
           mountPath: /dev/shm
+        - name: vllm-scripts
+          mountPath: /scripts
+          readOnly: true
       volumes:
       - name: model-storage
         hostPath:
@@ -144,6 +171,10 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 256Mi
+      - name: vllm-scripts
+        configMap:
+          name: vllm-scripts
+          defaultMode: 0755
 
 ---
 # Worker 节点 Deployment (Rank 1-N)
@@ -182,22 +213,13 @@ spec:
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
         command:
-        - vllm
-        - serve
-        - ${MODEL_PATH}
-        - --served-model-name
-        - ${MODEL_NAME}
-        - --tensor-parallel-size
-        - "${TENSOR_PARALLEL_SIZE}"
-        - --max-model-len
-        - "${MAX_MODEL_LEN}"
-        - --max-num-seqs
-        - "${MAX_NUM_SEQS}"
-        - --port
-        - "8000"
-        - --distributed-executor-backend
-        - ray
-        - --trust-remote-code
+        - /bin/bash
+        - -c
+        - |
+          # Ray 集群引导 - Worker 节点连接到 head
+          ray start --address=${MASTER_NODE_IP}:${MASTER_PORT}
+          # 启动 vLLM
+          /scripts/deploy.sh
         env:
         - name: HF_HUB_OFFLINE
           value: "1"
@@ -246,6 +268,9 @@ spec:
           readOnly: true
         - name: shared-memory
           mountPath: /dev/shm
+        - name: vllm-scripts
+          mountPath: /scripts
+          readOnly: true
       volumes:
       - name: model-storage
         hostPath:
@@ -259,6 +284,10 @@ spec:
         emptyDir:
           medium: Memory
           sizeLimit: 256Mi
+      - name: vllm-scripts
+        configMap:
+          name: vllm-scripts
+          defaultMode: 0755
 
 ---
 apiVersion: v1
