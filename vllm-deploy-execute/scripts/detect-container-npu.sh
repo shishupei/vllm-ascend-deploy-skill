@@ -4,7 +4,7 @@
 
 set -e
 
-echo "=== Container NPU Detection ==="
+echo "=== Container NPU Detection ===" >&2
 
 # 检查 /dev 目录下的 NPU 设备
 NPU_DEVICES=""
@@ -24,17 +24,17 @@ done
 NPU_DEVICES=$(echo "$NPU_DEVICES" | tr ' ' '\n' | grep -v '^$' | sort -u)
 NPU_COUNT=$(echo "$NPU_DEVICES" | grep '/dev/davinci[0-9]' | wc -l)
 
-echo "NPU Devices found:"
-echo "$NPU_DEVICES"
-echo "NPU Count: $NPU_COUNT"
+echo "NPU Devices found:" >&2
+echo "$NPU_DEVICES" >&2
+echo "NPU Count: $NPU_COUNT" >&2
 
 # 检查 npu-smi
 NPU_SMI_AVAILABLE=false
 if command -v npu-smi &> /dev/null; then
     NPU_SMI_AVAILABLE=true
-    echo ""
-    echo "=== NPU-SMI Info ==="
-    npu-smi info 2>/dev/null || echo "npu-smi info failed"
+    echo "" >&2
+    echo "=== NPU-SMI Info ===" >&2
+    npu-smi info 2>/dev/null >&2 || echo "npu-smi info failed" >&2
 fi
 
 # 输出 JSON
@@ -47,5 +47,5 @@ cat <<EOF
 }
 EOF
 
-echo ""
-echo "=== Detection Complete ==="
+echo "" >&2
+echo "=== Detection Complete ===" >&2
