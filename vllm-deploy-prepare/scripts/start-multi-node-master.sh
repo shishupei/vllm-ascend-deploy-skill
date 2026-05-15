@@ -30,13 +30,20 @@ export WORLD_SIZE
 export MASTER_ADDR
 export MASTER_PORT
 
-# ============ 启动命令构建 ============
-echo "Starting vLLM serve as Master (Rank ${RANK})..."
-echo "Model: ${MODEL_PATH}"
-echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}"
-echo "World Size: ${WORLD_SIZE}"
-echo "Master Addr: ${MASTER_ADDR}"
-echo "Master Port: ${MASTER_PORT}"
+# ============ Ray 集群引导（Master 作为 Head）============
+echo "Starting Ray cluster as Head node..." >&2
+ray start --head --port=${MASTER_PORT} --node-ip-address=${HCCL_IF_IP}
+
+# 等待 Ray 集群稳定
+sleep 5
+
+# ============ 启动 vLLM ============
+echo "Starting vLLM serve as Master (Rank ${RANK})..." >&2
+echo "Model: ${MODEL_PATH}" >&2
+echo "Tensor Parallel Size: ${TENSOR_PARALLEL_SIZE}" >&2
+echo "World Size: ${WORLD_SIZE}" >&2
+echo "Master Addr: ${MASTER_ADDR}" >&2
+echo "Master Port: ${MASTER_PORT}" >&2
 
 vllm serve "${MODEL_PATH}" \
     --served-model-name "${MODEL_NAME:-default}" \
@@ -47,4 +54,4 @@ vllm serve "${MODEL_PATH}" \
     --port 8000 \
     --trust-remote-code
 
-echo "vLLM Master service started"
+echo "vLLM Master service started" >&2
