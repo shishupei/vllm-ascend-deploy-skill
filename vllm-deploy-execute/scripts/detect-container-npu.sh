@@ -8,7 +8,8 @@ echo "=== Container NPU Detection ===" >&2
 
 # 检查 /dev 目录下的 NPU 设备
 NPU_DEVICES=""
-for i in 0 1 2 3 4 5 6 7; do
+# 支持扫描 0-15，覆盖 A3 16 卡环境
+for i in $(seq 0 15); do
     if [ -e "/dev/davinci$i" ]; then
         NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
     fi
