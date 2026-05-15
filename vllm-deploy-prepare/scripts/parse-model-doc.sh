@@ -3,6 +3,17 @@
 
 set -e
 
+# JSON 字符串转义函数（用于手动构建 JSON 时防止注入）
+escape_json_string() {
+    local str="$1"
+    str="${str//\\/\\\\}"      # 先转义反斜杠
+    str="${str//\"/\\\"}"      # 再转义双引号
+    str="${str//$'\n'/\\n}"    # 转义换行
+    str="${str//$'\r'/\\r}"    # 转义回车
+    str="${str//$'\t'/\\t}"    # 转义制表符
+    echo "$str"
+}
+
 usage() {
     echo "Usage: $0 --url <URL> --hw-spec <A3|A2> --deploy-mode <single_node|multi_node|pd_separate>"
     exit 1
@@ -74,11 +85,11 @@ if command -v jq &> /dev/null; then
 else
     # 手动构建 JSON（需要转义）
     printf '{\n'
-    printf '  "image_version": "%s",\n' "$IMAGE_VERSION"
-    printf '  "source_image": "%s",\n' "$SOURCE_IMAGE"
-    printf '  "hw_spec": "%s",\n' "$HW_SPEC"
-    printf '  "deploy_mode": "%s",\n' "$DEPLOY_MODE"
-    printf '  "script_template": "%s",\n' "$SCRIPT_BLOCK"
+    printf '  "image_version": "%s",\n' "$(escape_json_string "$IMAGE_VERSION")"
+    printf '  "source_image": "%s",\n' "$(escape_json_string "$SOURCE_IMAGE")"
+    printf '  "hw_spec": "%s",\n' "$(escape_json_string "$HW_SPEC")"
+    printf '  "deploy_mode": "%s",\n' "$(escape_json_string "$DEPLOY_MODE")"
+    printf '  "script_template": "%s",\n' "$(escape_json_string "$SCRIPT_BLOCK")"
     printf '  "extracted_params": {\n'
     if [ -n "$MAX_MODEL_LEN" ]; then
         printf '    "max_model_len": %s,\n' "$MAX_MODEL_LEN"

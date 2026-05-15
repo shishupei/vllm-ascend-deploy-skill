@@ -52,6 +52,7 @@ NPU_RESOURCE_TYPES="huawei.com/Ascend910 huawei.com/NPU huawei.com/Ascend310P hu
 
 # 使用临时文件收集节点 JSON，然后用 jq 合并
 TEMP_NODES_FILE=$(mktemp)
+trap "rm -f '$TEMP_NODES_FILE'" EXIT
 
 for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
     # 获取节点 IP
