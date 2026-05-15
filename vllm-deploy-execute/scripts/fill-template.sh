@@ -171,6 +171,41 @@ case "$DEPLOY_MODE" in
         ;;
 esac
 
+# 生成脚本 ConfigMap YAML
+cat <<EOF > "$OUTPUT_DIR/scripts-configmap.yaml"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-scripts
+  namespace: ${NAMESPACE}
+data:
+  detect-npu.sh: |
+    #!/bin/bash
+    set -e
+    echo "=== Container NPU Detection ===" >&2
+    NPU_DEVICES=""
+    for i in $(seq 0 15); do
+      if [ -e "/dev/davinci\$i" ]; then
+        NPU_DEVICES="\$NPU_DEVICES /dev/davinci\$i"
+      fi
+    done
+    NPU_COUNT=\$(echo "\$NPU_DEVICES" | wc -w)
+    echo "NPU Count: \$NPU_COUNT" >&2
+    printf '{"pod_name": "%s", "npu_count": %d}\n' "\${HOSTNAME:-unknown}" "\$NPU_COUNT"
+  deploy.sh: |
+    #!/bin/bash
+    set -e
+    vllm serve ${MODEL_PATH} \
+      --served-model-name ${MODEL_NAME} \
+      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+      --max-model-len ${MAX_MODEL_LEN} \
+      --max-num-seqs ${MAX_NUM_SEQS} \
+      --port 8000 \
+      --trust-remote-code
+EOF
+
+echo "Generated: $OUTPUT_DIR/scripts-configmap.yaml"
+
 # 生成 apply-all.sh
 cat <<EOF > "$OUTPUT_DIR/apply-all.sh"
 #!/bin/bash
