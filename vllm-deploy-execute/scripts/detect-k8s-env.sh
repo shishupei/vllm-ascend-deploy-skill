@@ -4,7 +4,7 @@
 
 set -e
 
-echo "=== K8s Environment Detection ==="
+echo "=== K8s Environment Detection ===" >&2
 
 # 检查 kubectl
 if ! command -v kubectl &> /dev/null; then
@@ -42,7 +42,7 @@ EOF
     exit 1
 fi
 
-echo "Cluster connected successfully!"
+echo "Cluster connected successfully!" >&2
 
 # 获取所有节点
 NODES=$(kubectl get nodes -o json)
@@ -50,8 +50,8 @@ NODES=$(kubectl get nodes -o json)
 # 支持的 NPU 资源类型
 NPU_RESOURCE_TYPES="huawei.com/Ascend910 huawei.com/NPU huawei.com/Ascend310P huawei.com/Ascend910B"
 
-# 构建节点列表 JSON
-NODE_LIST="[]"
+# 使用临时文件收集节点 JSON，然后用 jq 合并
+TEMP_NODES_FILE=$(mktemp)
 
 for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); do
     # 获取节点 IP
@@ -62,7 +62,6 @@ for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); d
     NPU_COUNT=0
 
     for npu_type in $NPU_RESOURCE_TYPES; do
-        # 使用 jq 风格的 jsonpath
         count=$(kubectl get node "$node_name" -o json | jq -r ".status.allocatable.\"$npu_type\"" 2>/dev/null || echo "0")
         if [ "$count" != "null" ] && [ "$count" != "0" ] && [ -n "$count" ]; then
             NPU_TYPE="$npu_type"
@@ -71,26 +70,25 @@ for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); d
         fi
     done
 
-    # 构建节点 JSON
-    NODE_JSON=$(cat <<EOF
-{
-  "name": "$node_name",
-  "ip": "$NODE_IP",
-  "npu_type": "$NPU_TYPE",
-  "npu_count": $NPU_COUNT,
-  "npu_available": $NPU_COUNT,
-  "labels": {}
-}
-EOF
-)
-
-    # 添加到节点列表（使用 Python 或简单字符串拼接）
-    if [ "$NODE_LIST" = "[]" ]; then
-        NODE_LIST="[$NODE_JSON]"
-    else
-        NODE_LIST="${NODE_LIST%,*}, $NODE_JSON]"
-    fi
+    # 输出单个节点 JSON 到临时文件
+    jq -n \
+        --arg name "$node_name" \
+        --arg ip "$NODE_IP" \
+        --arg npu_type "$NPU_TYPE" \
+        --argjson npu_count "$NPU_COUNT" \
+        '{
+            name: $name,
+            ip: $ip,
+            npu_type: $npu_type,
+            npu_count: $npu_count,
+            npu_available: $npu_count,
+            labels: {}
+        }' >> "$TEMP_NODES_FILE"
 done
+
+# 使用 jq 合并所有节点为数组
+NODE_LIST=$(jq -s '.' "$TEMP_NODES_FILE")
+rm "$TEMP_NODES_FILE"
 
 # 推荐节点（按 NPU 数量排序）
 RECOMMENDED=$(echo "$NODE_LIST" | jq -r '[.[] | select(.npu_count > 0)] | sort_by(-.npu_count) | .[].name' 2>/dev/null || echo "")
@@ -98,7 +96,7 @@ RECOMMENDED=$(echo "$NODE_LIST" | jq -r '[.[] | select(.npu_count > 0)] | sort_b
 # 计算总 NPU 数量
 TOTAL_NPU=$(echo "$NODE_LIST" | jq '[.[].npu_count] | add' 2>/dev/null || echo "0")
 
-# 输出结果
+# 输出结果（仅 stdout）
 cat <<EOF
 {
   "cluster_connected": true,
@@ -108,5 +106,5 @@ cat <<EOF
 }
 EOF
 
-echo ""
-echo "Detection completed. Total available NPU: $TOTAL_NPU"
+echo "" >&2
+echo "Detection completed. Total available NPU: $TOTAL_NPU" >&2
