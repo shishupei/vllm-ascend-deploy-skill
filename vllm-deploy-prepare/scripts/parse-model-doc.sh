@@ -22,9 +22,9 @@ if [ -z "$URL" ] || [ -z "$HW_SPEC" ] || [ -z "$DEPLOY_MODE" ]; then
     usage
 fi
 
-echo "Parsing: $URL"
-echo "HW Spec: $HW_SPEC"
-echo "Deploy Mode: $DEPLOY_MODE"
+echo "Parsing: $URL" >&2
+echo "HW Spec: $HW_SPEC" >&2
+echo "Deploy Mode: $DEPLOY_MODE" >&2
 
 # 抓取页面 HTML
 HTML=$(curl -sL "$URL" 2>/dev/null || wget -qO- "$URL" 2>/dev/null)
