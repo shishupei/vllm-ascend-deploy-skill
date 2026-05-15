@@ -7,18 +7,28 @@ set -e
 # 参数检查
 CONFIG_FILE="${1:-.vllm-deploy/config.json}"
 DETECTION_FILE="${2:-.vllm-deploy/detection-result.json}"
-OUTPUT_DIR="${3:-.vllm-deploy/k8s}"
+NODES_FILE="${3:-.vllm-deploy/selected-nodes.json}"  # 用户确认的节点选择
+OUTPUT_DIR="${4:-.vllm-deploy/k8s}"
 
 if [ ! -f "$CONFIG_FILE" ]; then
-    echo "Error: config.json not found at $CONFIG_FILE"
-    echo "Please run /vllm-deploy-prepare first"
+    echo "Error: config.json not found at $CONFIG_FILE" >&2
+    echo "Please run /vllm-deploy-prepare first" >&2
     exit 1
 fi
 
 if [ ! -f "$DETECTION_FILE" ]; then
-    echo "Error: detection-result.json not found at $DETECTION_FILE"
-    echo "Please run K8s environment detection first"
+    echo "Error: detection-result.json not found at $DETECTION_FILE" >&2
+    echo "Please run K8s environment detection first" >&2
     exit 1
+fi
+
+# 如果没有节点选择文件，使用探测结果中的推荐节点
+if [ ! -f "$NODES_FILE" ]; then
+    echo "Warning: selected-nodes.json not found, using recommended_nodes from detection" >&2
+    SELECTED_MASTER=$(jq -r '.recommended_nodes[0]' "$DETECTION_FILE")
+else
+    echo "Using node selection from: $NODES_FILE"
+    SELECTED_MASTER=$(jq -r '.master_node // .nodes[0].name // .nodes[0]' "$NODES_FILE")
 fi
 
 echo "=== Filling Templates ==="
@@ -49,7 +59,6 @@ MODEL_PATH_HOST="$MODEL_PATH"
 
 # 读取探测结果
 NPU_RESOURCE_TYPE=$(jq -r '.nodes[0].npu_type // "huawei.com/Ascend910"' "$DETECTION_FILE")
-SELECTED_MASTER="${SELECTED_MASTER:-$(jq -r '.recommended_nodes[0]' "$DETECTION_FILE")}"
 
 # 填充函数
 fill_template() {
@@ -89,35 +98,77 @@ case "$DEPLOY_MODE" in
         ;;
 
     multi_node)
-        WORLD_SIZE=$(jq -r '.nodes | length' "$DETECTION_FILE")
-        MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip' "$DETECTION_FILE")
-        NPU_COUNT_PER_NODE=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .npu_count // 8' "$DETECTION_FILE")
+        # 读取节点选择配置，优先使用 NODES_FILE
+        if [ -f "$NODES_FILE" ]; then
+            # 从 selected-nodes.json 读取用户确认的节点
+            WORLD_SIZE=$(jq -r '.nodes | length' "$NODES_FILE")
+            MASTER_NODE_IP=$(jq -r '.nodes[0].ip // .nodes[0]' "$NODES_FILE")
+            NPU_COUNT_PER_NODE=$(jq -r '.nodes[0].npu_count // 8' "$NODES_FILE")
+            SELECTED_MASTER=$(jq -r '.nodes[0].name // .nodes[0]' "$NODES_FILE")
 
-        # 生成 master YAML
-        fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/master.yaml" \
-            "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
-             -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
-             -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
-             -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
-             -e s|\${WORKER_RANK}|0|g \
-             -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
-             -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
-
-        # 为每个 worker 生成独立 YAML（使用 while read 处理，避免节点名含空格问题）
-        WORKER_INDEX=1
-        while IFS= read -r worker_node; do
-            [ -z "$worker_node" ] && continue
-            WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$worker_node'") | .ip' "$DETECTION_FILE")
-            fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
+            # 生成 master YAML
+            fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/master.yaml" \
                 "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
                  -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
                  -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
                  -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
-                 -e s|\${WORKER_RANK}|${WORKER_INDEX}|g \
-                 -e s|\${WORKER_NODE_NAME}|${worker_node}|g \
-                 -e s|\${WORKER_NODE_IP}|${WORKER_IP}|g"
-            WORKER_INDEX=$((WORKER_INDEX + 1))
-        done < <(jq -r '.recommended_nodes[1:][]' "$DETECTION_FILE")
+                 -e s|\${WORKER_RANK}|0|g \
+                 -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
+                 -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
+
+            # 为每个 worker 生成独立 YAML（从 NODES_FILE 读取）
+            WORKER_INDEX=1
+            while IFS= read -r worker_entry; do
+                [ -z "$worker_entry" ] && continue
+                # 支持对象格式 {name, ip} 或简单字符串
+                WORKER_NAME=$(echo "$worker_entry" | jq -r '.name // .')
+                WORKER_IP=$(echo "$worker_entry" | jq -r '.ip // empty')
+                # 如果没有 ip 字段，从 detection-result.json 查找
+                if [ -z "$WORKER_IP" ]; then
+                    WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$WORKER_NAME'") | .ip' "$DETECTION_FILE")
+                fi
+                fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
+                    "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
+                     -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
+                     -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
+                     -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
+                     -e s|\${WORKER_RANK}|${WORKER_INDEX}|g \
+                     -e s|\${WORKER_NODE_NAME}|${WORKER_NAME}|g \
+                     -e s|\${WORKER_NODE_IP}|${WORKER_IP}|g"
+                WORKER_INDEX=$((WORKER_INDEX + 1))
+            done < <(jq -c '.nodes[1:][]' "$NODES_FILE")
+        else
+            # 原有逻辑：从 detection-result.json 读取推荐节点
+            WORLD_SIZE=$(jq -r '.nodes | length' "$DETECTION_FILE")
+            MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip' "$DETECTION_FILE")
+            NPU_COUNT_PER_NODE=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .npu_count // 8' "$DETECTION_FILE")
+
+            # 生成 master YAML
+            fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/master.yaml" \
+                "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
+                 -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
+                 -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
+                 -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
+                 -e s|\${WORKER_RANK}|0|g \
+                 -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
+                 -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
+
+            # 为每个 worker 生成独立 YAML
+            WORKER_INDEX=1
+            while IFS= read -r worker_node; do
+                [ -z "$worker_node" ] && continue
+                WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$worker_node'") | .ip' "$DETECTION_FILE")
+                fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
+                    "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
+                     -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
+                     -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
+                     -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
+                     -e s|\${WORKER_RANK}|${WORKER_INDEX}|g \
+                     -e s|\${WORKER_NODE_NAME}|${worker_node}|g \
+                     -e s|\${WORKER_NODE_IP}|${WORKER_IP}|g"
+                WORKER_INDEX=$((WORKER_INDEX + 1))
+            done < <(jq -r '.recommended_nodes[1:][]' "$DETECTION_FILE")
+        fi
 
         # 合并所有 YAML（检查是否有 worker 文件）
         if ls "$OUTPUT_DIR"/worker-*.yaml 1>/dev/null 2>&1; then
