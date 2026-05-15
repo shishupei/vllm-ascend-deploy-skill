@@ -103,9 +103,10 @@ case "$DEPLOY_MODE" in
              -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
              -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
 
-        # 为每个 worker 生成独立 YAML
+        # 为每个 worker 生成独立 YAML（使用 while read 处理，避免节点名含空格问题）
         WORKER_INDEX=1
-        for worker_node in $(jq -r '.recommended_nodes[1:][]' "$DETECTION_FILE"); do
+        while IFS= read -r worker_node; do
+            [ -z "$worker_node" ] && continue
             WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$worker_node'") | .ip' "$DETECTION_FILE")
             fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
                 "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
@@ -116,10 +117,14 @@ case "$DEPLOY_MODE" in
                  -e s|\${WORKER_NODE_NAME}|${worker_node}|g \
                  -e s|\${WORKER_NODE_IP}|${WORKER_IP}|g"
             WORKER_INDEX=$((WORKER_INDEX + 1))
-        done
+        done < <(jq -r '.recommended_nodes[1:][]' "$DETECTION_FILE")
 
-        # 合并所有 YAML
-        cat "$OUTPUT_DIR/master.yaml" "$OUTPUT_DIR"/worker-*.yaml > "$OUTPUT_DIR/all.yaml"
+        # 合并所有 YAML（检查是否有 worker 文件）
+        if ls "$OUTPUT_DIR"/worker-*.yaml 1>/dev/null 2>&1; then
+            cat "$OUTPUT_DIR/master.yaml" "$OUTPUT_DIR"/worker-*.yaml > "$OUTPUT_DIR/all.yaml"
+        else
+            cp "$OUTPUT_DIR/master.yaml" "$OUTPUT_DIR/all.yaml"
+        fi
         ;;
 
     pd_separate)
