@@ -6,7 +6,7 @@ set -e
 DEFAULT_URL="https://docs.vllm.ai/projects/vllm-ascend-cn/zh-cn/latest/user_guide/deployment_guide/using_volcano_kthena.html"
 URL="${1:-$DEFAULT_URL}"
 
-echo "Fetching K8s deployment config from: $URL"
+echo "Fetching K8s deployment config from: $URL" >&2
 
 # 抓取页面 HTML
 HTML=$(curl -sL "$URL" 2>/dev/null || wget -qO- "$URL" 2>/dev/null)
@@ -34,6 +34,9 @@ ENV_VARS=$(echo "$HTML" | grep -oE 'name: [A-Z_]+|value: [^<]*' | paste - - | se
 
 # 提取分布式配置参数（PD分离相关）
 KV_CONFIG=$(echo "$HTML" | grep -o '"kv_connector":"[^"]*"' | head -1)
+if [ -z "$KV_CONFIG" ]; then
+    KV_CONFIG='null'
+fi
 
 # 输出 JSON
 cat <<EOF
