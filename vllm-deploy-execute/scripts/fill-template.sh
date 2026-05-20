@@ -230,6 +230,26 @@ case "$DEPLOY_MODE" in
         ;;
 esac
 
+# 根据部署模式生成 deploy.sh 内容
+if [ "$DEPLOY_MODE" = "multi_node" ]; then
+    DEPLOY_SH_CONTENT="vllm serve ${MODEL_PATH} \
+      --served-model-name ${MODEL_NAME} \
+      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+      --max-model-len ${MAX_MODEL_LEN} \
+      --max-num-seqs ${MAX_NUM_SEQS} \
+      --distributed-executor-backend ray \
+      --port 8000 \
+      --trust-remote-code"
+else
+    DEPLOY_SH_CONTENT="vllm serve ${MODEL_PATH} \
+      --served-model-name ${MODEL_NAME} \
+      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+      --max-model-len ${MAX_MODEL_LEN} \
+      --max-num-seqs ${MAX_NUM_SEQS} \
+      --port 8000 \
+      --trust-remote-code"
+fi
+
 # 生成脚本 ConfigMap YAML
 cat <<EOF > "$OUTPUT_DIR/scripts-configmap.yaml"
 apiVersion: v1
@@ -254,13 +274,7 @@ data:
   deploy.sh: |
     #!/bin/bash
     set -e
-    vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --port 8000 \
-      --trust-remote-code
+    ${DEPLOY_SH_CONTENT}
 EOF
 
 echo "Generated: $OUTPUT_DIR/scripts-configmap.yaml"
