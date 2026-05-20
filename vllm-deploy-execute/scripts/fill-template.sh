@@ -51,6 +51,8 @@ TENSOR_PARALLEL_SIZE=$(jq -r '.tensor_parallel_size' "$CONFIG_FILE")
 MASTER_PORT=$(jq -r '.master_port // 29500' "$CONFIG_FILE")
 
 # 资源默认值
+CPU_REQUEST="${CPU_REQUEST:-4}"
+MEMORY_REQUEST="${MEMORY_REQUEST:-32Gi}"
 CPU_LIMIT="${CPU_LIMIT:-8}"
 MEMORY_LIMIT="${MEMORY_LIMIT:-64Gi}"
 SERVICE_PORT="${SERVICE_PORT:-30000}"
@@ -77,6 +79,8 @@ fill_template() {
         -e "s|\${TENSOR_PARALLEL_SIZE}|${TENSOR_PARALLEL_SIZE}|g" \
         -e "s|\${CPU_LIMIT}|${CPU_LIMIT}|g" \
         -e "s|\${MEMORY_LIMIT}|${MEMORY_LIMIT}|g" \
+        -e "s|\${CPU_REQUEST}|${CPU_REQUEST}|g" \
+        -e "s|\${MEMORY_REQUEST}|${MEMORY_REQUEST}|g" \
         -e "s|\${SERVICE_PORT}|${SERVICE_PORT}|g" \
         -e "s|\${MODEL_MOUNT_PATH}|${MODEL_MOUNT_PATH}|g" \
         -e "s|\${MODEL_PATH_HOST}|${MODEL_PATH_HOST}|g" \
@@ -106,17 +110,14 @@ case "$DEPLOY_MODE" in
             NPU_COUNT_PER_NODE=$(jq -r '.nodes[0].npu_count // 8' "$NODES_FILE")
             SELECTED_MASTER=$(jq -r '.nodes[0].name // .nodes[0]' "$NODES_FILE")
 
-            # 生成 master YAML
-            fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/master.yaml" \
+            # 生成 master YAML（使用 master-only 模板）
+            fill_template "$TEMPLATE_DIR/multi-node-master.yaml" "$OUTPUT_DIR/master.yaml" \
                 "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
                  -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
                  -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
-                 -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
-                 -e s|\${WORKER_RANK}|0|g \
-                 -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
-                 -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
+                 -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g"
 
-            # 为每个 worker 生成独立 YAML（从 NODES_FILE 读取）
+            # 为每个 worker 生成独立 YAML（使用 worker-only 模板）
             WORKER_INDEX=1
             while IFS= read -r worker_entry; do
                 [ -z "$worker_entry" ] && continue
@@ -127,7 +128,7 @@ case "$DEPLOY_MODE" in
                 if [ -z "$WORKER_IP" ]; then
                     WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$WORKER_NAME'") | .ip' "$DETECTION_FILE")
                 fi
-                fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
+                fill_template "$TEMPLATE_DIR/multi-node-worker.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
                     "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
                      -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
                      -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
@@ -143,22 +144,19 @@ case "$DEPLOY_MODE" in
             MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip' "$DETECTION_FILE")
             NPU_COUNT_PER_NODE=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .npu_count // 8' "$DETECTION_FILE")
 
-            # 生成 master YAML
-            fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/master.yaml" \
+            # 生成 master YAML（使用 master-only 模板）
+            fill_template "$TEMPLATE_DIR/multi-node-master.yaml" "$OUTPUT_DIR/master.yaml" \
                 "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
                  -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
                  -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
-                 -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g \
-                 -e s|\${WORKER_RANK}|0|g \
-                 -e s|\${WORKER_NODE_NAME}|${SELECTED_MASTER}|g \
-                 -e s|\${WORKER_NODE_IP}|${MASTER_NODE_IP}|g"
+                 -e s|\${NPU_COUNT_PER_NODE}|${NPU_COUNT_PER_NODE}|g"
 
-            # 为每个 worker 生成独立 YAML
+            # 为每个 worker 生成独立 YAML（使用 worker-only 模板）
             WORKER_INDEX=1
             while IFS= read -r worker_node; do
                 [ -z "$worker_node" ] && continue
                 WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$worker_node'") | .ip' "$DETECTION_FILE")
-                fill_template "$TEMPLATE_DIR/multi-node.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
+                fill_template "$TEMPLATE_DIR/multi-node-worker.yaml" "$OUTPUT_DIR/worker-${WORKER_INDEX}.yaml" \
                     "-e s|\${MASTER_NODE_NAME}|${SELECTED_MASTER}|g \
                      -e s|\${MASTER_NODE_IP}|${MASTER_NODE_IP}|g \
                      -e s|\${WORLD_SIZE}|${WORLD_SIZE}|g \
@@ -188,7 +186,17 @@ case "$DEPLOY_MODE" in
         KV_CONNECTOR=$(jq -r '.kv_connector // "MooncakeConnectorV1"' "$CONFIG_FILE")
         DECODE_MAX_BATCHED_TOKENS=$(jq -r '.decode_max_batched_tokens // 16384' "$CONFIG_FILE")
 
-        fill_template "$TEMPLATE_DIR/pd-separate.yaml" "$OUTPUT_DIR/all.yaml" \
+        # 动态选择模板：检查 prepare 阶段复制了哪个模板
+        PD_TEMPLATE="$TEMPLATE_DIR/pd-separate.yaml"
+        if [ -f "$TEMPLATE_DIR/pd-separate-kthena.yaml" ]; then
+            # 检查 config.json 中的模板类型偏好
+            PD_TEMPLATE_TYPE=$(jq -r '.pd_template_type // "standard"' "$CONFIG_FILE")
+            if [ "$PD_TEMPLATE_TYPE" = "kthena" ]; then
+                PD_TEMPLATE="$TEMPLATE_DIR/pd-separate-kthena.yaml"
+            fi
+        fi
+
+        fill_template "$PD_TEMPLATE" "$OUTPUT_DIR/all.yaml" \
             "-e s|\${PREFILL_TP_SIZE}|${PREFILL_TP_SIZE}|g \
              -e s|\${DECODE_TP_SIZE}|${DECODE_TP_SIZE}|g \
              -e s|\${PREFILL_NPU_COUNT}|${PREFILL_NPU_COUNT}|g \

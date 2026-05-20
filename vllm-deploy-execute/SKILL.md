@@ -44,16 +44,15 @@ vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
 ## 输出
 
 生成 `.vllm-deploy/k8s/` 目录，包含：
-- `namespace.yaml` - 已填充的 Namespace
-- `configmap.yaml` - 已填充的 ConfigMap
-- `deployment-*.yaml` - 已填充的 Deployment（按节点数量）
-- `service.yaml` - 已填充的 Service
+- `all.yaml` - 合并的 K8s 资源清单（Namespace、ConfigMap、Deployment、Service）
+- `master.yaml` - 仅多节点模式：Master 节点清单
+- `worker-*.yaml` - 仅多节点模式：Worker 节点清单（按节点编号）
+- `scripts-configmap.yaml` - Pod 内脚本 ConfigMap（detect-npu.sh、deploy.sh）
 - `apply-all.sh` - 一键部署脚本
 - `README.md` - 部署指南
 
 以及：
 - `detection-result.json` - K8s 环境探测结果
-- `final-output.json` - 最终部署信息
 
 ## 用户确认点
 

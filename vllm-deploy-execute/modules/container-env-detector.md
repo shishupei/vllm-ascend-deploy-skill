@@ -22,7 +22,7 @@
 
 2. 在 Pod 内执行探测：
    ```bash
-   kubectl exec -n ${NAMESPACE} ${POD_NAME} -- bash scripts/detect-container-npu.sh
+   kubectl exec -n ${NAMESPACE} ${POD_NAME} -- bash /scripts/detect-npu.sh
    ```
 
 3. 解析探测结果，确认 NPU 设备映射正确
