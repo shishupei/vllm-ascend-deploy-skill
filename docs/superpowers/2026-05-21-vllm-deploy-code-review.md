@@ -1,244 +1,231 @@
-# vLLM Deploy Skill 代码审查（基于 README 原始需求）
+# vLLM Deploy Skill 检视意见（基于 README 原始需求）
 
 日期：2026-05-21
 
 审查对象：
 
 - 分支：`chore/vllm-deploy-worktree-base-20260514`
-- HEAD：`473d92c`
-- 需求基线：`README.md`
+- HEAD：`c7e4131`
+- 对比基线：`473d92c`
+- 需求真源：`README.md`
 
 ## 范围
 
-本次审查不以当前 Skill 内部文档为准，而以仓库根目录 `README.md` 描述的 Phase 1-12 端到端流程作为原始需求，对照当前实现的脚本、模板和执行链路。
+本次检视以仓库根目录 `README.md` 描述的 Phase 1-12 端到端流程作为原始需求，对照当前实现的脚本、模板和执行链路，重点检查：
 
-重点检查：
-
-- 当前实现是否满足 `README.md` 中的人工确认点和交付物
-- 多节点 `multi_node` 路径是否存在会直接影响部署成功的运行时缺陷
-- 生成脚本与输出工件的契约是否自洽
+- 现在的实现是否还能按 `README.md` 指定流程走通
+- 输出给用户的文档和脚本是否与真实生成物一致
+- `multi_node` 路径是否仍有实际阻断问题
 
 ## 结论
 
-**如果 `README.md` 仍然是需求真源，当前实现不满足合并条件。**
+**如果 `README.md` 仍然是需求真源，当前实现仍不满足合并条件。**
 
-原因不是单一文档不一致，而是两类问题同时存在：
+与前一版审查相比，`deploy.sh` 独立生成、`master_node` 选择冲突、旧三参数兼容、`WORLD_SIZE` 回退逻辑这几项已经修复；但当前 `HEAD` 仍有三类问题：
 
-1. 主流程已经偏离 `README.md` 的原始交互设计，Phase 9-11 没有被真实实现。
-2. 当前 `multi_node` 路径仍有实际运行缺陷，节点选择结果在部分输入下会直接失败或生成错误拓扑。
+1. `prepare` 阶段输出的模板与 `execute` 阶段实际消费的模板集合不一致，`multi_node` 在干净环境中会直接失败。
+2. Phase 9 探测结果没有被 Phase 10 消费，当前 `deploy.sh` 仍然不是“基于容器内探测结果生成”。
+3. 生成给用户的 `README.md` 与实际执行链路不一致，用户按文档操作无法完成部署。
 
 ## 发现的问题
 
 ### Critical
 
-1. `README.md` 要求的 Phase 9-11 主流程没有真正落地，当前实现绕过了“容器内探测 -> 生成 deploy.sh -> 用户确认执行”的关键路径
+1. `multi_node` 在干净输出目录中无法生成 YAML，`prepare` 与 `execute` 的模板契约已经断链
+
+参考：
+
+- `vllm-deploy-prepare/modules/template-generator.md:16`
+- `vllm-deploy-prepare/modules/template-generator.md:29`
+- `vllm-deploy-prepare/modules/template-generator.md:90`
+- `vllm-deploy-execute/modules/yaml-generator.md:57`
+- `vllm-deploy-execute/scripts/fill-template.sh:111`
+- `vllm-deploy-execute/scripts/fill-template.sh:144`
+- `vllm-deploy-execute/scripts/fill-template.sh:162`
+
+问题：
+
+- `prepare` 阶段文档声明 `multi_node` 只会复制 `multi-node.yaml` 到 `.vllm-deploy/templates/`。
+- `execute` 阶段实际却不再读取 `multi-node.yaml`，而是强依赖 `multi-node-master.yaml` 和 `multi-node-worker.yaml`。
+- 这不是单纯文档未同步，而是实际输入工件集合已经变了，但上游交付物没有一起更新。
+
+本地复现摘要：
+
+- 在全新临时目录中只放入 `prepare` 阶段承诺的 `multi-node.yaml`。
+- 执行：
+  - `bash vllm-deploy-execute/scripts/fill-template.sh .vllm-deploy/config.json .vllm-deploy/detection-result.json .vllm-deploy/k8s`
+- 实际报错：
+  - `sed: can't read .vllm-deploy/templates/multi-node-master.yaml: No such file or directory`
+
+影响：
+
+- 只要按当前 `prepare` 文档和输出结构运行，`multi_node` 就无法进入 Phase 8。
+- 这是端到端主路径直接中断的问题。
+
+2. Phase 9 的容器内探测结果没有进入 Phase 10，`deploy.sh` 仍然不是按 README 要求“基于探测结果生成”
 
 参考：
 
 - `README.md:226`
-- `README.md:249`
-- `README.md:269`
-- `vllm-deploy-execute/scripts/fill-template.sh:233`
-- `vllm-deploy-execute/scripts/fill-template.sh:254`
-- `vllm-deploy-prepare/templates/single-node.yaml:84`
-- `vllm-deploy-prepare/templates/multi-node-master.yaml:99`
-- `vllm-deploy-prepare/templates/multi-node-worker.yaml:42`
+- `README.md:253`
+- `vllm-deploy-execute/modules/container-env-detector.md:23`
+- `vllm-deploy-execute/modules/deploy-generator.md:5`
+- `vllm-deploy-execute/scripts/detect-container-npu.sh:42`
+- `vllm-deploy-execute/scripts/fill-template.sh:269`
+- `vllm-deploy-execute/scripts/fill-template.sh:282`
 
 问题：
 
-- `README.md` 明确要求在 Phase 9 先做容器内探测，在 Phase 10 生成 `.vllm-deploy/k8s/deploy.sh`，Phase 11 再由用户确认并手动执行。
-- 当前实现没有生成独立的 `.vllm-deploy/k8s/deploy.sh` 文件。
-- `fill-template.sh` 只是把 `deploy.sh` 文本塞进 `scripts-configmap.yaml`。
-- 单节点 / PD / HA 模板在 Pod 启动时直接执行 `vllm serve`。
-- 多节点模板在容器启动时直接执行 `ray start` 后调用 `/scripts/deploy.sh`，同样绕过了用户确认步骤。
+- `README.md` 的 Phase 9 要先在 Pod 内探测 `npu_count`、`npu_devices`、`npu_smi_available`。
+- `deploy-generator.md` 也明确写了“根据容器内 NPU 探测结果生成 Pod 内执行脚本”。
+- 但当前 `deploy.sh` 是在 `fill-template.sh` 中和 YAML 同时生成的，只读取 `config.json`，并未读取任何容器探测结果文件或命令输出。
+- 生成的 `--tensor-parallel-size` 仍完全依赖 Phase 6 的 `config.json`，不是 Phase 9 的探测结果。
 
 影响：
 
-- `README.md` 中最核心的人工确认点之一已经消失。
-- Phase 9-11 名义上存在，实际上没有独立执行空间。
-- 这不是单纯“文档没更新”，而是当前产物与原始需求不一致。
+- 当前实现虽然重新引入了独立 `deploy.sh`，但并没有真正实现 README 定义的 Phase 9 -> Phase 10 数据闭环。
+- 如果容器内实际可见 NPU 数与预期不一致，脚本不会被调整，用户仍可能在 Phase 11 执行错误配置。
 
-2. `selected-nodes.json` 中使用 `master_node` 时，`multi_node` 仍可能生成自相矛盾的拓扑
+### Important
+
+1. 当前生成给用户的 `.vllm-deploy/k8s/README.md` 与真实执行链路冲突，缺少 Phase 9-11 的关键操作
 
 参考：
 
-- `vllm-deploy-execute/scripts/fill-template.sh:31`
-- `vllm-deploy-execute/scripts/fill-template.sh:108`
-- `vllm-deploy-execute/scripts/fill-template.sh:109`
-- `vllm-deploy-execute/scripts/fill-template.sh:111`
-- `vllm-deploy-execute/scripts/fill-template.sh:122`
+- `README.md:275`
+- `README.md:307`
+- `vllm-deploy-execute/modules/deploy-execution-guide.md:18`
+- `vllm-deploy-execute/scripts/fill-template.sh:335`
+- `vllm-deploy-execute/scripts/fill-template.sh:348`
+- `vllm-deploy-execute/scripts/fill-template.sh:359`
+- `vllm-deploy-prepare/templates/single-node.yaml:78`
 
 问题：
 
-- 脚本先从 `master_node` 读取用户选中的 Master 名称。
-- 但进入 `multi_node` 分支后，又直接从 `.nodes[0]` 读取 `MASTER_NODE_IP`、`NPU_COUNT_PER_NODE` 和新的 `SELECTED_MASTER`。
-- Worker 列表则从 `.nodes[1:]` 继续迭代。
+- 生成的 `.vllm-deploy/k8s/README.md` 只告诉用户：
+  - 执行 `bash apply-all.sh`
+  - `kubectl get pods`
+  - `curl /v1/models`
+- 但当前 Pod 模板实际会 `tail -f /dev/null` 等待人工把 `deploy.sh` 复制进 Pod 并手动执行。
+- 生成的 README 完全没有写：
+  - 如何执行容器内 NPU 探测
+  - 如何 `kubectl cp deploy.sh`
+  - 如何 `kubectl exec ... bash /tmp/deploy.sh`
 
-本地复现摘要：
+本地渲染结果摘要：
 
-- 构造 `selected-nodes.json`：
-  - `master_node = "node-b"`
-  - `nodes = [{"name":"node-a","ip":"10.0.0.1"}, {"name":"node-b","ip":"10.0.0.2"}]`
-- 生成结果中：
-  - `master.yaml` 的 `nodeName` 指向 `node-b`
-  - 但 `MASTER_ADDR` 却是 `10.0.0.1`
-  - `worker-1.yaml` 仍然被调度到 `node-b`
+- `single_node` 生成的 README 在“部署步骤”后直接让用户访问服务。
+- 同一次渲染生成的 Pod YAML 明确显示容器会一直等待用户手动执行 `deploy.sh`。
 
 影响：
 
-- Master 名称、Master 地址和 Worker 分配可能互相冲突。
-- 这会直接破坏 Ray / 分布式 rendezvous，属于实际阻断部署的问题。
+- 用户按当前交付 README 操作，最多只会把等待中的 Pod 部署出来，并不会真正启动 vLLM 服务。
+- 这是用户交付物与实际运行行为冲突，不是低优先级文档润色问题。
 
-### High
-
-1. 脚本注释声称支持“字符串数组格式”的节点列表，但当前实现会直接崩溃
+2. `selected-nodes.json` 的“字符串数组格式支持”仍然在入口处失效
 
 参考：
 
-- `vllm-deploy-execute/scripts/fill-template.sh:109`
-- `vllm-deploy-execute/scripts/fill-template.sh:125`
-- `vllm-deploy-execute/scripts/fill-template.sh:126`
+- `vllm-deploy-execute/scripts/fill-template.sh:42`
+- `vllm-deploy-execute/scripts/fill-template.sh:48`
+- `vllm-deploy-execute/scripts/fill-template.sh:127`
+- `vllm-deploy-execute/scripts/fill-template.sh:156`
 
 问题：
 
-- 代码注释写明支持对象格式 `{name, ip}` 和简单字符串格式。
-- 但实现中会先访问 `.nodes[0].ip`、`.name // .`，对字符串数组会触发 `jq` 类型错误。
+- 脚本后半段已经为对象格式和字符串格式加了类型判断。
+- 但在进入 `multi_node` 分支之前，入口仍先执行：
+  - `SELECTED_MASTER=$(jq -r '.master_node // .nodes[0].name // .nodes[0]' "$NODES_FILE")`
+- 当 `.nodes[0]` 本身是字符串时，这里会先触发 `jq: Cannot index string with string "name"`，后面的兼容逻辑根本无法生效。
 
 本地复现摘要：
 
 - 输入：
-  - `{"nodes": ["node-a", "node-b"]}`
-- 运行结果：
+  - `{"master_node":"node-b","nodes":["node-a","node-b"]}`
+- 直接执行上述 `jq` 表达式会报：
   - `jq: error ... Cannot index string with string "name"`
 
 影响：
 
-- 一类脚本自称支持的输入格式在当前实现中完全不可用。
-- 节点确认链路的兼容性声明与真实行为不一致。
-
-2. `fill-template.sh` 的命令行参数契约被静默改坏，旧的三参数调用会“成功”但输出到错误目录
-
-参考：
-
-- `vllm-deploy-execute/scripts/fill-template.sh:10`
-- `vllm-deploy-execute/scripts/fill-template.sh:11`
-- `docs/superpowers/plans/2026-05-15-code-review-fixes.md:1102`
-
-问题：
-
-- 脚本原先第三个参数是输出目录的语义。
-- 当前实现把第三个参数改成了 `NODES_FILE`，输出目录移动到了第四个参数。
-- 仓库内仍存在旧的三参数调用示例。
-
-本地复现摘要：
-
-- 以旧方式执行：
-  - `fill-template.sh <config> <detection> <output-dir>`
-- 脚本不会报错。
-- 但会把 `<output-dir>` 当作 `selected-nodes.json` 路径处理，然后回退输出到默认目录 `.vllm-deploy/k8s`。
-
-影响：
-
-- 这是静默回归，不容易第一时间被发现。
-- 自动化脚本或人工验证如果仍按旧接口调用，会得到“成功但工件落错位置”的结果。
-
-3. 当没有 `selected-nodes.json` 时，`WORLD_SIZE` 取值和实际生成的 Worker 数量可能不一致
-
-参考：
-
-- `README.md:125`
-- `vllm-deploy-execute/modules/k8s-env-detector.md:40`
-- `vllm-deploy-execute/scripts/fill-template.sh:143`
-- `vllm-deploy-execute/scripts/fill-template.sh:168`
-
-问题：
-
-- 回退路径下，`WORLD_SIZE=$(jq -r '.nodes | length' "$DETECTION_FILE")` 使用的是全部探测到的节点数。
-- 但 Worker YAML 只从 `recommended_nodes[1:]` 生成。
-
-影响：
-
-- 如果 `nodes` 总数大于推荐节点数，最终生成的 Pod 数量会少于声明的 world size。
-- 分布式进程可能永远等待不存在的 rank。
+- 当前代码实际只稳定支持对象数组格式。
+- 如果继续宣称支持字符串数组格式，节点确认链路的兼容性声明仍然是不成立的。
 
 ### Medium
 
-1. 当前输出工件与 `README.md` Phase 7 / Phase 12 的交付物已经明显分叉
+1. 仓库内关于输出工件的说明仍然存在三套互相冲突的口径
 
 参考：
 
-- `README.md:180`
-- `README.md:198`
-- `README.md:299`
-- `vllm-deploy-execute/SKILL.md:44`
-- `vllm-deploy-execute/scripts/fill-template.sh:171`
-- `vllm-deploy-execute/scripts/fill-template.sh:253`
+- `README.md:300`
+- `vllm-deploy-execute/SKILL.md:46`
+- `vllm-deploy-execute/modules/yaml-generator.md:74`
+- `vllm-deploy-execute/modules/deploy-generator.md:63`
 
 问题：
 
-- `README.md` 要求输出 `namespace.yaml`、`configmap.yaml`、`deployment-*.yaml`、`service.yaml`、`apply-all.sh`、`deploy.sh`。
-- 当前实现实际输出的是：
-  - `all.yaml`
-  - 可选 `master.yaml` / `worker-*.yaml`
-  - `scripts-configmap.yaml`
-  - `apply-all.sh`
-  - `README.md`
-- `vllm-deploy-execute/SKILL.md` 已经部分接受这种新工件结构，但 `README.md` 还没有同步。
+- `README.md` 已经更新为 `all.yaml` / `master.yaml` / `worker-*.yaml` / `deploy.sh`。
+- `vllm-deploy-execute/SKILL.md` 仍写着会输出 `scripts-configmap.yaml`。
+- `modules/yaml-generator.md` 仍写着 `namespace.yaml`、`configmap.yaml`、`deployment-master.yaml`、`service.yaml`。
+- `modules/deploy-generator.md` 仍写着多节点会生成 `deploy-master.sh`、`deploy-worker-1.sh`，而当前实现只生成一个统一的 `deploy.sh`。
 
 影响：
 
-- 如果 `README.md` 作为用户面向的操作说明，则当前交付物不符合原始需求。
-- 如果当前实现是新的正确行为，则需要先明确“README 已失效”，否则评审标准会持续漂移。
+- 后续评审、测试和人工操作都很难基于同一份契约工作。
+- 这类漂移已经开始影响真实实现判断，而不只是文档质量问题。
 
 ## 已执行验证
 
 - 阅读 `README.md`，按 Phase 1-12 理解原始需求
+- 阅读 `vllm-deploy-prepare/SKILL.md`
 - 阅读 `vllm-deploy-execute/SKILL.md`
+- 阅读 `vllm-deploy-prepare/modules/template-generator.md`
+- 阅读 `vllm-deploy-execute/modules/yaml-generator.md`
+- 阅读 `vllm-deploy-execute/modules/container-env-detector.md`
 - 阅读 `vllm-deploy-execute/modules/deploy-generator.md`
 - 审阅 `vllm-deploy-execute/scripts/fill-template.sh`
+- 审阅 `vllm-deploy-execute/scripts/detect-container-npu.sh`
 - 审阅 `vllm-deploy-prepare/templates/single-node.yaml`
-- 审阅 `vllm-deploy-prepare/templates/multi-node-master.yaml`
-- 审阅 `vllm-deploy-prepare/templates/multi-node-worker.yaml`
-- 对 `fill-template.sh` 做最小本地复现，验证：
-  - 字符串数组格式 `selected-nodes.json` 会报 `jq` 错误
-  - `master_node` 不在 `.nodes[0]` 时会生成错误拓扑
-  - 旧三参数调用会忽略请求的输出目录
+- 在隔离临时目录中做最小本地复现，验证：
+  - `multi_node` 只提供 `multi-node.yaml` 时会因缺少 `multi-node-master.yaml` 直接失败
+  - `single_node` 生成的 README 未包含 Phase 9-11 所需手动步骤
+  - 字符串数组格式 `selected-nodes.json` 在入口 jq 表达式处就会报错
 
 本次未执行：
 
 - 真实 K8s 集群部署
 - Pod 内实际 `ray` / `vllm` 启动验证
+- `prepare` 阶段真实对模板复制动作的交互式验收
 
 ## 建议的下一步
 
-1. 先明确谁是需求真源：
-   - 如果以 `README.md` 为准，就必须补齐 Phase 9-11 的真实执行链路。
-   - 如果以当前 auto-start 方案为准，就应明确废弃 `README.md` 的旧流程并整体回写。
+1. 先修复 `prepare`/`execute` 模板契约断链：
+   - 要么 `prepare` 阶段输出 `multi-node-master.yaml` 和 `multi-node-worker.yaml`
+   - 要么 `execute` 阶段恢复消费 `multi-node.yaml`
 
-2. 修复 `selected-nodes.json` 契约：
-   - 明确定义唯一支持的数据结构。
-   - `master_node`、`nodes`、IP、rank 的推导逻辑必须一致。
+2. 明确实现 Phase 9 -> Phase 10 的数据传递：
+   - 至少让 `deploy.sh` 的关键参数来自容器内探测结果，而不是只来自 `config.json`
+   - 如果不打算这么做，就需要同步修改 `README.md`、模块文档和设计文档，明确废弃该要求
 
-3. 修复 `fill-template.sh` 接口兼容性：
-   - 恢复旧参数顺序兼容，或显式失败，不要静默回退。
+3. 重写生成的 `.vllm-deploy/k8s/README.md`：
+   - 加入容器探测命令
+   - 加入 `kubectl cp deploy.sh`
+   - 加入 `kubectl exec ... bash /tmp/deploy.sh`
+   - 对多节点补充执行顺序说明
 
-4. 补最小渲染测试：
-   - `multi_node` 对象格式
-   - `multi_node` 字符串格式
-   - `master_node` 非首元素
-   - 无 `selected-nodes.json` 的回退路径
+4. 修正 `selected-nodes.json` 入口解析：
+   - 在首次读取 `SELECTED_MASTER` 时就做类型判断
+   - 或明确只支持对象数组格式，并删除所有字符串数组兼容声明
+
+5. 清理文档口径：
+   - `README.md`
+   - `vllm-deploy-execute/SKILL.md`
+   - `modules/yaml-generator.md`
+   - `modules/deploy-generator.md`
 
 ## 评估
 
-Ready to merge：**Yes**（修复后）
+Ready to merge：**No**
 
-修复摘要：
+Reasoning：
 
-- **Critical 1**：重构 Phase 9-11 执行链路，生成独立 deploy.sh 文件供用户确认后手动执行
-- **Critical 2**：修复 master_node 与 .nodes[0] 冲突，正确查找匹配 SELECTED_MASTER 的节点 IP
-- **High 1**：修复字符串数组格式 jq 类型错误，使用 jq 类型判断处理对象/字符串
-- **High 2**：恢复参数契约兼容性，支持旧三参数调用和新四参数调用
-- **High 3**：修复 WORLD_SIZE 计算逻辑，使用 recommended_nodes 长度而非全部节点数
-- **Medium 1**：更新 README.md Phase 12 交付物列表以匹配实际输出
-
-验证结果：所有修复通过本地渲染测试（6 PASS, 0 FAIL）
+当前 `HEAD` 已修复上一轮 review 中的若干实现缺陷，但端到端主路径仍存在断链：`multi_node` 在干净环境中无法生成 YAML，且交付给用户的 README 不能指导完成 Phase 9-11。只要 `README.md` 仍是需求真源，这些问题都属于阻断项。
