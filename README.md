@@ -300,13 +300,12 @@ kubectl exec -n <namespace> <pod-name> -- bash deploy.sh
 ```
 .vllm-deploy/k8s/
 ├── README.md            # 执行指南
-├── namespace.yaml
-├── configmap.yaml
-├── deployment-node1.yaml
-├── deployment-node2.yaml
-├── service.yaml
-├── apply-all.sh         # 一键 apply 所有 YAML
-└── deploy.sh            # Pod 内部署脚本
+├── all.yaml             # 合并的 YAML（单节点模式）
+│   # 或分立的 YAML（多节点模式）：
+│   ├── master.yaml      # Master Deployment + Service
+│   └── worker-*.yaml    # Worker Deployment(s)
+├── deploy.sh            # 用户确认后手动执行的 vLLM 启动脚本
+└── apply-all.sh         # 一键 apply 所有 YAML
 ```
 
 ---

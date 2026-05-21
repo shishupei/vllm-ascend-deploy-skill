@@ -4,11 +4,28 @@
 
 set -e
 
-# 参数检查
-CONFIG_FILE="${1:-.vllm-deploy/config.json}"
-DETECTION_FILE="${2:-.vllm-deploy/detection-result.json}"
-NODES_FILE="${3:-.vllm-deploy/selected-nodes.json}"  # 用户确认的节点选择
-OUTPUT_DIR="${4:-.vllm-deploy/k8s}"
+# 参数检查 - 支持新旧两种契约
+# 新契约（4参数）：CONFIG, DETECTION, NODES_FILE, OUTPUT_DIR
+# 旧契约（3参数）：CONFIG, DETECTION, OUTPUT_DIR（NODES_FILE 使用默认值）
+if [ $# -eq 3 ]; then
+    # 旧契约：第三个参数是 OUTPUT_DIR
+    CONFIG_FILE="$1"
+    DETECTION_FILE="$2"
+    OUTPUT_DIR="$3"
+    NODES_FILE=".vllm-deploy/selected-nodes.json"
+elif [ $# -ge 4 ]; then
+    # 新契约：四个参数
+    CONFIG_FILE="$1"
+    DETECTION_FILE="$2"
+    NODES_FILE="$3"
+    OUTPUT_DIR="$4"
+else
+    # 无参数或少于 3 个参数：使用默认值
+    CONFIG_FILE="${1:-.vllm-deploy/config.json}"
+    DETECTION_FILE="${2:-.vllm-deploy/detection-result.json}"
+    NODES_FILE="${3:-.vllm-deploy/selected-nodes.json}"
+    OUTPUT_DIR="${4:-.vllm-deploy/k8s}"
+fi
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: config.json not found at $CONFIG_FILE" >&2
@@ -105,10 +122,23 @@ case "$DEPLOY_MODE" in
         # 读取节点选择配置，优先使用 NODES_FILE
         if [ -f "$NODES_FILE" ]; then
             # 从 selected-nodes.json 读取用户确认的节点
+            # SELECTED_MASTER 已在第 31 行从 .master_node 字段读取
             WORLD_SIZE=$(jq -r '.nodes | length' "$NODES_FILE")
-            MASTER_NODE_IP=$(jq -r '.nodes[0].ip // .nodes[0]' "$NODES_FILE")
-            NPU_COUNT_PER_NODE=$(jq -r '.nodes[0].npu_count // 8' "$NODES_FILE")
-            SELECTED_MASTER=$(jq -r '.nodes[0].name // .nodes[0]' "$NODES_FILE")
+            # 检查 nodes 元素类型（对象格式 vs 字符串格式）
+            NODE_TYPE=$(jq -r '.nodes[0] | type' "$NODES_FILE")
+            if [ "$NODE_TYPE" = "object" ]; then
+                # 对象格式：查找匹配 SELECTED_MASTER 的节点
+                MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip // empty' "$NODES_FILE")
+                NPU_COUNT_PER_NODE=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .npu_count // 8' "$NODES_FILE")
+            else
+                # 字符串格式：节点名即为字符串本身，从 detection-result.json 获取 IP
+                MASTER_NODE_IP=""
+                NPU_COUNT_PER_NODE=8
+            fi
+            # 如果 NODES_FILE 中没有 IP，从 detection-result.json 查找
+            if [ -z "$MASTER_NODE_IP" ]; then
+                MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip' "$DETECTION_FILE")
+            fi
 
             # 生成 master YAML（使用 master-only 模板）
             fill_template "$TEMPLATE_DIR/multi-node-master.yaml" "$OUTPUT_DIR/master.yaml" \
@@ -122,8 +152,9 @@ case "$DEPLOY_MODE" in
             while IFS= read -r worker_entry; do
                 [ -z "$worker_entry" ] && continue
                 # 支持对象格式 {name, ip} 或简单字符串
-                WORKER_NAME=$(echo "$worker_entry" | jq -r '.name // .')
-                WORKER_IP=$(echo "$worker_entry" | jq -r '.ip // empty')
+                # 使用 jq 类型判断避免字符串索引错误
+                WORKER_NAME=$(echo "$worker_entry" | jq -r 'if type == "object" then .name else . end')
+                WORKER_IP=$(echo "$worker_entry" | jq -r 'if type == "object" then .ip else empty end')
                 # 如果没有 ip 字段，从 detection-result.json 查找
                 if [ -z "$WORKER_IP" ]; then
                     WORKER_IP=$(jq -r '.nodes[] | select(.name=="'$WORKER_NAME'") | .ip' "$DETECTION_FILE")
@@ -137,10 +168,15 @@ case "$DEPLOY_MODE" in
                      -e s|\${WORKER_NODE_NAME}|${WORKER_NAME}|g \
                      -e s|\${WORKER_NODE_IP}|${WORKER_IP}|g"
                 WORKER_INDEX=$((WORKER_INDEX + 1))
-            done < <(jq -c '.nodes[1:][]' "$NODES_FILE")
+            done < <(if [ "$NODE_TYPE" = "object" ]; then
+                        jq -c '.nodes[] | select(.name != "'$SELECTED_MASTER'")' "$NODES_FILE"
+                    else
+                        jq -c '.nodes[] | select(. != "'$SELECTED_MASTER'")' "$NODES_FILE"
+                    fi)
         else
             # 原有逻辑：从 detection-result.json 读取推荐节点
-            WORLD_SIZE=$(jq -r '.nodes | length' "$DETECTION_FILE")
+            # WORLD_SIZE 应等于实际生成的 Pod 数量（recommended_nodes 的长度）
+            WORLD_SIZE=$(jq -r '.recommended_nodes | length' "$DETECTION_FILE")
             MASTER_NODE_IP=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .ip' "$DETECTION_FILE")
             NPU_COUNT_PER_NODE=$(jq -r '.nodes[] | select(.name=="'$SELECTED_MASTER'") | .npu_count // 8' "$DETECTION_FILE")
 
@@ -231,53 +267,49 @@ case "$DEPLOY_MODE" in
 esac
 
 # 根据部署模式生成 deploy.sh 内容
+# 生成独立的 deploy.sh 文件供用户确认后手动执行（Phase 10-11）
 if [ "$DEPLOY_MODE" = "multi_node" ]; then
-    DEPLOY_SH_CONTENT="vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --distributed-executor-backend ray \
-      --port 8000 \
-      --trust-remote-code"
+    cat <<EOF > "$OUTPUT_DIR/deploy.sh"
+#!/bin/bash
+# vLLM 分布式部署脚本（多节点模式）
+# 请在 Phase 11 手动执行：
+#   kubectl exec -n ${NAMESPACE} <pod-name> -- bash /tmp/deploy.sh
+# 注意：需要先通过 kubectl cp 将此脚本复制到 Pod 内：
+#   kubectl cp $OUTPUT_DIR/deploy.sh -n ${NAMESPACE} <pod-name>:/tmp/deploy.sh
+
+set -e
+echo "=== Starting vLLM Service ==="
+vllm serve ${MODEL_PATH} \
+  --served-model-name ${MODEL_NAME} \
+  --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+  --max-model-len ${MAX_MODEL_LEN} \
+  --max-num-seqs ${MAX_NUM_SEQS} \
+  --distributed-executor-backend ray \
+  --port 8000 \
+  --trust-remote-code
+EOF
 else
-    DEPLOY_SH_CONTENT="vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --port 8000 \
-      --trust-remote-code"
+    cat <<EOF > "$OUTPUT_DIR/deploy.sh"
+#!/bin/bash
+# vLLM 部署脚本（单节点模式）
+# 请在 Phase 11 手动执行：
+#   kubectl exec -n ${NAMESPACE} <pod-name> -- bash /tmp/deploy.sh
+# 注意：需要先通过 kubectl cp 将此脚本复制到 Pod 内：
+#   kubectl cp $OUTPUT_DIR/deploy.sh -n ${NAMESPACE} <pod-name>:/tmp/deploy.sh
+
+set -e
+echo "=== Starting vLLM Service ==="
+vllm serve ${MODEL_PATH} \
+  --served-model-name ${MODEL_NAME} \
+  --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+  --max-model-len ${MAX_MODEL_LEN} \
+  --max-num-seqs ${MAX_NUM_SEQS} \
+  --port 8000 \
+  --trust-remote-code
+EOF
 fi
 
-# 生成脚本 ConfigMap YAML
-cat <<EOF > "$OUTPUT_DIR/scripts-configmap.yaml"
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: vllm-scripts
-  namespace: ${NAMESPACE}
-data:
-  detect-npu.sh: |
-    #!/bin/bash
-    set -e
-    echo "=== Container NPU Detection ===" >&2
-    NPU_DEVICES=""
-    for i in $(seq 0 15); do
-      if [ -e "/dev/davinci\$i" ]; then
-        NPU_DEVICES="\$NPU_DEVICES /dev/davinci\$i"
-      fi
-    done
-    NPU_COUNT=\$(echo "\$NPU_DEVICES" | wc -w)
-    echo "NPU Count: \$NPU_COUNT" >&2
-    printf '{"pod_name": "%s", "npu_count": %d}\n' "\${HOSTNAME:-unknown}" "\$NPU_COUNT"
-  deploy.sh: |
-    #!/bin/bash
-    set -e
-    ${DEPLOY_SH_CONTENT}
-EOF
-
-echo "Generated: $OUTPUT_DIR/scripts-configmap.yaml"
+echo "Generated: $OUTPUT_DIR/deploy.sh"
 
 # 生成 apply-all.sh
 cat <<EOF > "$OUTPUT_DIR/apply-all.sh"

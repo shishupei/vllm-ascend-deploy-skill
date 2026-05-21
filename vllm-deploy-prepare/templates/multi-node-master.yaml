@@ -49,17 +49,6 @@ data:
     cat <<EOF
 {"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
 EOF
-  deploy.sh: |
-    #!/bin/bash
-    set -e
-    vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --distributed-executor-backend ray \
-      --port 8000 \
-      --trust-remote-code
 
 ---
 # Master 节点 Deployment (Rank 0)
@@ -99,8 +88,9 @@ spec:
         - |
           # Ray 集群引导 - Master 节点启动 head
           ray start --head --port=${MASTER_PORT}
-          # 启动 vLLM
-          /scripts/deploy.sh
+          # 等待用户手动执行 deploy.sh（Phase 11）
+          echo "Ray cluster initialized. Waiting for deploy.sh execution..."
+          tail -f /dev/null
         env:
         - name: HF_HUB_OFFLINE
           value: "1"

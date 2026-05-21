@@ -44,16 +44,6 @@ data:
     cat <<EOF
 {"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
 EOF
-  deploy.sh: |
-    #!/bin/bash
-    set -e
-    vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --port 8000 \
-      --trust-remote-code
 
 ---
 apiVersion: apps/v1
@@ -82,20 +72,14 @@ spec:
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
         command:
-        - vllm
-        - serve
-        - ${MODEL_PATH}
-        - --served-model-name
-        - ${MODEL_NAME}
-        - --tensor-parallel-size
-        - "${TENSOR_PARALLEL_SIZE}"
-        - --max-model-len
-        - "${MAX_MODEL_LEN}"
-        - --max-num-seqs
-        - "${MAX_NUM_SEQS}"
-        - --port
-        - "8000"
-        - --trust-remote-code
+        - /bin/bash
+        - -c
+        - |
+          # 等待用户手动执行 deploy.sh（Phase 11）
+          echo "Pod ready. Waiting for deploy.sh execution..."
+          echo "Run: kubectl cp deploy.sh -n ${NAMESPACE} <pod-name>:/tmp/deploy.sh"
+          echo "Then: kubectl exec -n ${NAMESPACE} <pod-name> -- bash /tmp/deploy.sh"
+          tail -f /dev/null
         env:
         - name: HF_HUB_OFFLINE
           value: "1"
