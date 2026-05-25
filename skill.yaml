@@ -1,2 +1,0 @@
-name: vllm-deploy
-description: Use when deploying vLLM models on K8s with Ascend NPU. Automates model selection, doc parsing, K8s env detection, image handling, and generates deployment YAML files.

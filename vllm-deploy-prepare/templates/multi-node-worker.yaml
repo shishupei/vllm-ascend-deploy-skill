@@ -1,0 +1,115 @@
+# Worker 节点 Deployment (Rank 1-N)
+# 此模板只包含 Worker Deployment，不重复 Namespace/ConfigMaps/Service
+# 每个节点需要单独创建 Deployment，替换 ${WORKER_RANK} 和 ${WORKER_NODE_NAME}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-${MODEL_NAME}-worker-${WORKER_RANK}
+  namespace: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    role: worker
+    rank: "${WORKER_RANK}"
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vllm-deploy
+      model: ${MODEL_NAME}
+      role: worker
+      rank: "${WORKER_RANK}"
+  progressDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: vllm-deploy
+        model: ${MODEL_NAME}
+        role: worker
+        rank: "${WORKER_RANK}"
+    spec:
+      nodeName: ${WORKER_NODE_NAME}
+      hostNetwork: true
+      containers:
+      - name: vllm
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Ray 集群引导 - Worker 节点连接到 head
+          ray start --address=${MASTER_NODE_IP}:${MASTER_PORT}
+          # 等待用户手动执行 deploy.sh（Phase 11）
+          echo "Ray worker connected. Waiting for deploy.sh execution..."
+          tail -f /dev/null
+        env:
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: HCCL_IF_IP
+          value: "${WORKER_NODE_IP}"
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
+        - name: TP_SOCKET_IFNAME
+          value: "eth0"
+        - name: HCCL_SOCKET_IFNAME
+          value: "eth0"
+        - name: RANK
+          value: "${WORKER_RANK}"
+        - name: WORLD_SIZE
+          value: "${WORLD_SIZE}"
+        - name: MASTER_ADDR
+          value: "${MASTER_NODE_IP}"
+        - name: MASTER_PORT
+          value: "${MASTER_PORT}"
+        ports:
+        - name: http
+          containerPort: 8000
+        - name: ray
+          containerPort: ${MASTER_PORT}
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: "${CPU_LIMIT}"
+            memory: "${MEMORY_LIMIT}"
+            ${NPU_RESOURCE_TYPE}: "${NPU_COUNT_PER_NODE}"
+          requests:
+            cpu: "${CPU_REQUEST}"
+            memory: "${MEMORY_REQUEST}"
+            ${NPU_RESOURCE_TYPE}: "${NPU_COUNT_PER_NODE}"
+        volumeMounts:
+        - name: model-storage
+          mountPath: ${MODEL_MOUNT_PATH}
+        - name: hccn-config
+          mountPath: /etc/hccn.conf
+          readOnly: true
+        - name: shared-memory
+          mountPath: /dev/shm
+        - name: vllm-scripts
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: model-storage
+        hostPath:
+          path: ${MODEL_PATH_HOST}
+          type: Directory
+      - name: hccn-config
+        hostPath:
+          path: /etc/hccn.conf
+          type: File
+      - name: shared-memory
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
+      - name: vllm-scripts
+        configMap:
+          name: vllm-scripts
+          defaultMode: 0755

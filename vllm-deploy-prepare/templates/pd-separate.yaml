@@ -1,0 +1,352 @@
+# PD 分离部署 - 标准 Kubernetes Deployment
+# Prefill 和 Decode 节点分离部署
+# 使用 kv-transfer-config 进行 KV Cache 传输
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    deploy-mode: pd-separate
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-config
+  namespace: ${NAMESPACE}
+data:
+  MODEL_PATH: "${MODEL_PATH}"
+  MAX_MODEL_LEN: "${MAX_MODEL_LEN}"
+  MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
+  PREFILL_TP_SIZE: "${PREFILL_TP_SIZE}"
+  DECODE_TP_SIZE: "${DECODE_TP_SIZE}"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vllm-scripts
+  namespace: ${NAMESPACE}
+data:
+  detect-npu.sh: |
+    #!/bin/bash
+    set -e
+    echo "=== Container NPU Detection ===" >&2
+    NPU_DEVICES=""
+    for i in $(seq 0 15); do
+      if [ -e "/dev/davinci$i" ]; then
+        NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
+      fi
+    done
+    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $NPU_COUNT" >&2
+    cat <<EOF
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+EOF
+  deploy.sh: |
+    #!/bin/bash
+    set -e
+    vllm serve ${MODEL_PATH} \
+      --served-model-name ${MODEL_NAME} \
+      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
+      --max-model-len ${MAX_MODEL_LEN} \
+      --max-num-seqs ${MAX_NUM_SEQS} \
+      --port 8000 \
+      --trust-remote-code
+
+---
+# Prefill Deployment (KV Producer)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-${MODEL_NAME}-prefill
+  namespace: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    role: prefill
+spec:
+  replicas: ${PREFILL_REPLICAS}
+  selector:
+    matchLabels:
+      app: vllm-deploy
+      model: ${MODEL_NAME}
+      role: prefill
+  progressDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: vllm-deploy
+        model: ${MODEL_NAME}
+        role: prefill
+    spec:
+      hostNetwork: true
+      containers:
+      - name: vllm
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - vllm
+        - serve
+        - ${MODEL_PATH}
+        - --served-model-name
+        - ${MODEL_NAME}
+        - --tensor-parallel-size
+        - "${PREFILL_TP_SIZE}"
+        - --max-model-len
+        - "${MAX_MODEL_LEN}"
+        - --max-num-batched-tokens
+        - "${MAX_MODEL_LEN}"
+        - --port
+        - "8100"
+        - --trust-remote-code
+        - --enforce-eager
+        - --kv-transfer-config
+        - '{"kv_connector":"${KV_CONNECTOR}","kv_buffer_device":"npu","kv_role":"kv_producer","kv_parallel_size":1,"kv_port":"20001","engine_id":"0","kv_rank":0}'
+        env:
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: HCCL_IF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
+        - name: TP_SOCKET_IFNAME
+          value: "eth0"
+        - name: HCCL_SOCKET_IFNAME
+          value: "eth0"
+        - name: VLLM_LOGGING_LEVEL
+          value: DEBUG
+        ports:
+        - name: http
+          containerPort: 8100
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8100
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8100
+          initialDelaySeconds: 900
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: "${CPU_LIMIT}"
+            memory: "${MEMORY_LIMIT}"
+            ${NPU_RESOURCE_TYPE}: "${PREFILL_NPU_COUNT}"
+          requests:
+            cpu: "${CPU_REQUEST}"
+            memory: "${MEMORY_REQUEST}"
+            ${NPU_RESOURCE_TYPE}: "${PREFILL_NPU_COUNT}"
+        volumeMounts:
+        - name: model-storage
+          mountPath: ${MODEL_MOUNT_PATH}
+        - name: hccn-config
+          mountPath: /etc/hccn.conf
+          readOnly: true
+        - name: shared-memory
+          mountPath: /dev/shm
+        - name: vllm-scripts
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: model-storage
+        hostPath:
+          path: ${MODEL_PATH_HOST}
+          type: Directory
+      - name: hccn-config
+        hostPath:
+          path: /etc/hccn.conf
+          type: File
+      - name: shared-memory
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
+      - name: vllm-scripts
+        configMap:
+          name: vllm-scripts
+          defaultMode: 0755
+
+---
+# Decode Deployment (KV Consumer)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vllm-${MODEL_NAME}-decode
+  namespace: ${NAMESPACE}
+  labels:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    role: decode
+spec:
+  replicas: ${DECODE_REPLICAS}
+  selector:
+    matchLabels:
+      app: vllm-deploy
+      model: ${MODEL_NAME}
+      role: decode
+  progressDeadlineSeconds: 1200
+  template:
+    metadata:
+      labels:
+        app: vllm-deploy
+        model: ${MODEL_NAME}
+        role: decode
+    spec:
+      hostNetwork: true
+      containers:
+      - name: vllm
+        image: ${IMAGE}
+        imagePullPolicy: IfNotPresent
+        command:
+        - vllm
+        - serve
+        - ${MODEL_PATH}
+        - --served-model-name
+        - ${MODEL_NAME}
+        - --tensor-parallel-size
+        - "${DECODE_TP_SIZE}"
+        - --max-model-len
+        - "${MAX_MODEL_LEN}"
+        - --max-num-batched-tokens
+        - "${DECODE_MAX_BATCHED_TOKENS}"
+        - --port
+        - "8200"
+        - --trust-remote-code
+        - --enforce-eager
+        - --no-enable-prefix-caching
+        - --kv-transfer-config
+        - '{"kv_connector":"${KV_CONNECTOR}","kv_buffer_device":"npu","kv_role":"kv_consumer","kv_parallel_size":1,"kv_port":"20002","engine_id":"1","kv_rank":1}'
+        env:
+        - name: HF_HUB_OFFLINE
+          value: "1"
+        - name: HCCL_IF_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: GLOO_SOCKET_IFNAME
+          value: "eth0"
+        - name: TP_SOCKET_IFNAME
+          value: "eth0"
+        - name: HCCL_SOCKET_IFNAME
+          value: "eth0"
+        - name: VLLM_LOGGING_LEVEL
+          value: DEBUG
+        ports:
+        - name: http
+          containerPort: 8200
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8200
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 3
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8200
+          initialDelaySeconds: 900
+          periodSeconds: 10
+          failureThreshold: 3
+        resources:
+          limits:
+            cpu: "${CPU_LIMIT}"
+            memory: "${MEMORY_LIMIT}"
+            ${NPU_RESOURCE_TYPE}: "${DECODE_NPU_COUNT}"
+          requests:
+            cpu: "${CPU_REQUEST}"
+            memory: "${MEMORY_REQUEST}"
+            ${NPU_RESOURCE_TYPE}: "${DECODE_NPU_COUNT}"
+        volumeMounts:
+        - name: model-storage
+          mountPath: ${MODEL_MOUNT_PATH}
+        - name: hccn-config
+          mountPath: /etc/hccn.conf
+          readOnly: true
+        - name: shared-memory
+          mountPath: /dev/shm
+        - name: vllm-scripts
+          mountPath: /scripts
+          readOnly: true
+      volumes:
+      - name: model-storage
+        hostPath:
+          path: ${MODEL_PATH_HOST}
+          type: Directory
+      - name: hccn-config
+        hostPath:
+          path: /etc/hccn.conf
+          type: File
+      - name: shared-memory
+        emptyDir:
+          medium: Memory
+          sizeLimit: 256Mi
+      - name: vllm-scripts
+        configMap:
+          name: vllm-scripts
+          defaultMode: 0755
+
+---
+# PD Proxy Service (用于协调 Prefill 和 Decode)
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-prefill-service
+  namespace: ${NAMESPACE}
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    role: prefill
+  ports:
+  - name: http
+    port: 8100
+    targetPort: 8100
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-decode-service
+  namespace: ${NAMESPACE}
+spec:
+  type: ClusterIP
+  selector:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    role: decode
+  ports:
+  - name: http
+    port: 8200
+    targetPort: 8200
+
+---
+# External Service (用户访问入口)
+apiVersion: v1
+kind: Service
+metadata:
+  name: vllm-service
+  namespace: ${NAMESPACE}
+spec:
+  type: NodePort
+  selector:
+    app: vllm-deploy
+    model: ${MODEL_NAME}
+    role: decode
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8200
+    nodePort: ${SERVICE_PORT}

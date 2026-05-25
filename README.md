@@ -1,439 +1,296 @@
-# vLLM-Deploy Skill
+# vLLM-Ascend Deploy Skill
 
-从 vLLM-Ascend 文档自动提取部署脚本，根据 K8s 环境自动修改参数，生成一键执行的 K8s YAML。
+自动化 vLLM-Ascend 推理服务部署的 Claude Code Skill，从文档解析到 K8s 部署一站式完成。
 
-**执行环境：** K8s 管理节点（需有 kubectl 和集群管理权限）
+## 项目简介
 
-## 端到端流程
+本项目是 Claude Code 的技能包，用于在 **Kubernetes + 昇腾 NPU** 环境中自动化部署 vLLM-Ascend 推理服务。它通过解析 vLLM-Ascend 官方文档，自动提取部署脚本和镜像版本，结合 K8s 环境探测，生成可一键执行的 K8s YAML 和部署脚本。
+
+**核心特性：**
+- 📚 **文档驱动**：从官方文档自动提取部署参数，无需手动查文档
+- 🔍 **环境自适应**：自动探测 K8s 集群、NPU 设备、节点资源
+- 🎯 **针对性解析**：只解析用户选择的模型、硬件规格、部署模式
+- 📦 **镜像自动化**：拉取官方镜像 → 重打标签 → 推送到私有仓库
+- 🛡️ **安全确认点**：关键操作需用户手动确认执行
+- 🚀 **多模式支持**：单节点、多节点分布式、PD分离、HA高可用
+
+## 工作流程
+
+整个部署流程分为两个阶段，由两个协作技能完成：
 
 ```
-快速获取模型列表 → 用户选择（含镜像仓库） → 针对性文档解析 → K8s 环境探测 → 
-镜像处理 → 交互配置 → 生成 K8s YAML → 用户 apply → 容器内探测 → 
-生成部署脚本 → 用户确认执行 → 输出交付
+┌─────────────────────────────────────────────────────────────────┐
+│  Phase 1-7: 部署准备（vllm-deploy-prepare）                      │
+│  执行环境：任意有网络的节点                                       │
+├─────────────────────────────────────────────────────────────────┤
+│  1. 获取模型列表 → 用户选择模型                                   │
+│  2. 选择硬件规格（A3/A2）、部署模式、镜像仓库                      │
+│  3. 针对性解析文档（只解析用户选择的配置）                         │
+│  4. 处理镜像（拉取→打标签→推送）                                  │
+│  5. 交互配置（Namespace、模型路径、性能参数）                      │
+│  6. 生成 K8s 模板和启动脚本                                      │
+│                                                                 │
+│  输出：.vllm-deploy/ 目录                                        │
+├─────────────────────────────────────────────────────────────────┤
+│  Phase 4-12: 部署执行（vllm-deploy-execute）                     │
+│  执行环境：K8s 管理节点                                          │
+├─────────────────────────────────────────────────────────────────┤
+│  4. K8s 环境探测（节点列表、NPU 数量、硬件规格）                   │
+│  7. 填充模板生成完整 YAML                                        │
+│  8. 用户确认并执行 kubectl apply                                 │
+│  9. 容器内 NPU 探测                                             │
+│  10. 生成部署脚本                                                │
+│  11. 用户确认并手动执行部署                                       │
+│  12. 输出交付                                                    │
+│                                                                 │
+│  输出：.vllm-deploy/k8s/ 目录                                    │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
----
+## 支持的部署模式
 
-## Phase 1：快速获取模型列表
+| 模式 | 描述 | 适用场景 |
+|------|------|----------|
+| **单节点** | 在单个节点上部署 | 小规模推理、开发测试 |
+| **多节点** | 跨多个节点分布式部署 | 大模型推理、高吞吐场景 |
+| **PD分离** | Prefill/Decode 节点分离 | 优化推理延迟 |
+| **HA高可用** | 主备节点高可用部署 | 生产环境、服务稳定性要求高 |
 
-**模块：** `modules/model-list-fetcher.md`
+## 使用方法
 
-**输入：** 默认 URL：[vLLM-Ascend 模型列表页](https://docs.vllm.com.cn/projects/ascend/en/latest/tutorials/models/index.html)
+### 前置条件
 
-**处理：**
-1. 抓取模型列表页 HTML
-2. 快速提取所有模型名称和链接（不详细解析脚本内容）
-3. 展示模型列表供用户选择
+- **Claude Code CLI** 已安装
+- **vllm-deploy-prepare 技能** 已安装到 Claude Code
+- **vllm-deploy-execute 技能** 已安装到 Claude Code
+- Phase 2 执行需要：
+  - K8s 管理节点访问权限
+  - `kubectl` 已安装并配置
+  - Docker 环境（镜像处理步骤）
 
-**输出：**
-```json
-{
-  "models": [
-    {"name": "GLM-5", "url": "GLM5.html"},
-    {"name": "Qwen2.5-7B", "url": "Qwen2.5-7B.html"},
-    {"name": "DeepSeek-V3.1", "url": "DeepSeek-V3.1.html"}
-  ]
-}
+### 安装技能
+
+将本项目克隆到 Claude Code 的技能目录：
+
+```bash
+# 克隆到 Claude Code skills 目录
+cd ~/.claude/skills
+git clone <repo-url> vllm-deploy-prepare
+
+# 或手动复制
+cp -r vllm-deploy-prepare ~/.claude/skills/
+cp -r vllm-deploy-execute ~/.claude/skills/
 ```
 
----
+### 快速开始
 
-## Phase 2：用户选择
+#### Step 1: 部署准备
 
-**模块：** `modules/user-selector.md`
+在任意有网络的节点启动 Claude Code，运行准备技能：
 
-**输入：** Phase 1 模型列表
-
-**处理：**
-1. 用户选择模型（从列表选择）
-2. 用户选择硬件规格（A3/A2）
-3. 用户选择部署方式：
-   - **单节点**：使用 1 个节点部署
-   - **多节点**：使用多个节点进行分布式部署
-   - **PD分离**：Prefill 和 Decode 节点分离部署
-4. 用户输入目标镜像仓库地址（如 `harbor.example.com/library`）
-
-**输出：**
-```json
-{
-  "selected_model": "GLM-5",
-  "model_url": "GLM5.html",
-  "hw_spec": "A3",
-  "deploy_mode": "multi_node",
-  "image_registry": "harbor.example.com/library"
-}
+```bash
+claude-code
+> /vllm-deploy-prepare
 ```
 
----
+或直接说：
 
-## Phase 3：针对性文档解析
-
-**模块：** `modules/doc-parser.md`
-
-**输入：** Phase 2 用户选择结果
-
-**处理：**
-1. 只抓取用户选择的模型页面
-2. 只解析用户选择的硬件规格（A3 或 A2）的脚本
-3. 只解析用户选择的部署方式的脚本（单节点/多节点/PD分离）
-4. 提取镜像版本
-5. 提取参数模板
-
-**输出：** 针对性脚本模板（含镜像版本）
-
----
-
-## Phase 4：K8s 环境探测
-
-**模块：** `modules/k8s-env-detector.md`
-
-**执行位置：** K8s 管理节点
-
-**输入：** 无（自动执行）
-
-**处理：**
-1. 检查 `kubectl` 是否可用
-2. 检查 K8s 集群连接状态
-3. 获取集群节点列表（`kubectl get nodes`）
-4. 获取各节点 IP 地址（`kubectl get nodes -o wide`）
-5. 探测各节点 NPU 设备数量：
-   - 方式1：通过节点标签（`kubectl get nodes --show-labels`，查找 `ascend-npu` 相关标签）
-   - 方式2：通过资源容量（`kubectl describe node <name>`，查看 `davinci` 资源）
-   - 方式3：远程 SSH 到工作节点执行 `npu-smi`
-6. 判断硬件规格：A3（16卡）或 A2（8卡）
-7. 根据用户选择的部署模式推荐使用的节点
-
-**输出：**
-```json
-{
-  "kubectl_available": true,
-  "cluster_connected": true,
-  "nodes": [
-    {
-      "name": "node-1",
-      "ip": "192.168.1.100",
-      "npu_count": 16,
-      "hw_spec": "A3"
-    },
-    {
-      "name": "node-2",
-      "ip": "192.168.1.101",
-      "npu_count": 16,
-      "hw_spec": "A3"
-    }
-  ],
-  "recommended_nodes": ["node-1", "node-2"]
-}
+```
+> vllm 部署准备
 ```
 
----
+技能会引导您完成：
+1. 从 vLLM-Ascend 文档获取模型列表
+2. 选择模型（如 GLM-5、Qwen2.5-7B、DeepSeek-V3.1）
+3. 选择硬件规格（A3=16卡 或 A2=8卡）
+4. 选择部署模式（单节点/多节点/PD分离/HA）
+5. 输入私有镜像仓库地址
+6. 确认部署参数（Namespace、模型路径等）
 
-## Phase 5：镜像处理
+完成后生成 `.vllm-deploy/` 目录。
 
-**模块：** `modules/image-handler.md`
+#### Step 2: 部署执行
 
-**执行位置：** 有 Docker 环境的节点（管理节点或工作节点）
+切换到 K8s 管理节点，启动 Claude Code：
 
-**输入：** 
-- Phase 3 提取的源镜像版本（如 `quay.io/vllm-ascend/vllm-ascend:v0.6.0`）
-- Phase 2 用户指定的目标镜像仓库地址
-
-**处理：**
-1. 确认 Docker 环境可用
-2. 登录目标镜像仓库（`docker login`）
-3. 拉取官方镜像（如 `quay.io/vllm-ascend/vllm-ascend:v0.6.0`）
-4. 重新打标签为用户仓库地址（`docker tag`）
-5. 推送镜像到用户仓库（`docker push`）
-
-**输出：**
-```json
-{
-  "source_image": "quay.io/vllm-ascend/vllm-ascend:v0.6.0",
-  "target_image": "harbor.example.com/library/vllm-ascend:v0.6.0",
-  "push_success": true
-}
+```bash
+claude-code
+> /vllm-deploy-execute
 ```
 
----
+或：
 
-## Phase 6：交互配置
-
-**模块：** `modules/config-guide.md`
-
-**输入：** Phase 2-5 结果 + Phase 3 脚本模板
-
-**问答流程：**
-
-| 问答 | 内容 | 输出参数 |
-|-----|------|---------|
-| Q1 | Namespace 名称 | `namespace` |
-| Q2 | 模型路径输入 | `model_path` |
-| Q3 | 性能参数确认（max-model-len 等） | `max_model_len`、`max_num_seqs` |
-| Q4 | PD分离配置（如适用） | `prefill_nodes`、`decode_nodes` |
-
-**说明：** 镜像仓库地址已在 Phase 2 输入，镜像版本从文档解析自动提取，此阶段只需确认部署参数。
-
-**输出：** 完整用户配置参数集
-
----
-
-## Phase 7：生成 K8s YAML
-
-**模块：** `modules/k8s-yaml-generator.md`
-
-**输入：** 脚本模板 + Phase 2-6 配置结果
-
-**处理：**
-1. 根据硬件规格选择模板（A3/A2）
-2. 使用用户仓库的镜像地址生成 Deployment
-3. 生成 Namespace YAML
-4. 生成 ConfigMap YAML（存储配置参数）
-5. 生成各节点 Deployment YAML：
-   - 单节点：1 个 Deployment
-   - 多节点：多个 Deployment + 分布式配置
-   - PD分离：Prefill Deployment + Decode Deployment
-6. 生成 Service YAML（暴露服务端口）
-7. 生成 `apply-all.sh` 一键执行脚本
-
-**输出文件：**
 ```
-.vllm-deploy/k8s/
-├── namespace.yaml
-├── configmap.yaml
-├── deployment-node1.yaml
-├── deployment-node2.yaml
-├── service.yaml
-└── apply-all.sh
+> vllm 部署执行
 ```
 
----
+技能会：
+1. 自动探测 K8s 集群环境
+2. 探测各节点 NPU 设备
+3. 填充模板生成完整 YAML
+4. 生成 `apply-all.sh` 一键部署脚本
 
-## Phase 8：用户执行 K8s Apply
-
-**模块：** `modules/k8s-apply-guide.md`
-
-**用户操作：** 执行生成的 K8s YAML
-
+**用户需手动确认执行：**
 ```bash
 cd .vllm-deploy/k8s
 bash apply-all.sh
 ```
 
-或手动 apply 各 YAML 文件。
+#### Step 3: 启动 vLLM 服务
 
----
-
-## Phase 9：容器内环境探测
-
-**模块：** `modules/container-env-detector.md`
-
-**触发时机：** 用户确认 Pod 已成功启动后
-
-**处理：**
-1. 获取 Pod 状态（`kubectl get pods -n <namespace>`）
-2. 进入 Pod 探测 NPU 设备映射情况
-3. 验证 NPU 设备是否正确挂载
-4. 确定容器内实际可用的硬件规格
-
-**输出：**
-```json
-{
-  "pod_name": "vllm-deploy-node1-xxx",
-  "container_npu_count": 8,
-  "devices_mapped": ["davinci0", "davinci1", ...]
-}
-```
-
----
-
-## Phase 10：生成部署脚本
-
-**模块：** `modules/deploy-generator.md`
-
-**输入：** 容器内探测结果 + 用户配置
-
-**处理：**
-1. 根据容器内 NPU 数量生成 `vllm serve` 启动命令
-2. 设置正确的 `--tensor-parallel-size`
-3. 生成 Pod 内执行的部署脚本
-4. 展示脚本内容供用户确认
-
-**输出文件：**
-```
-.vllm-deploy/k8s/
-└── deploy.sh            # 在 Pod 内执行 vllm serve
-```
-
----
-
-## Phase 11：用户确认并执行部署脚本
-
-**模块：** `modules/deploy-execution-guide.md`
-
-**用户操作：**
-
-1. **确认脚本内容**：查看生成的 `deploy.sh` 脚本
-2. **手动执行部署**：确认无误后在 Pod 内执行
+Pod 启动后，技能会生成部署脚本。用户需确认并手动执行：
 
 ```bash
-# 查看脚本内容
+# 查看生成的部署脚本
 cat .vllm-deploy/k8s/deploy.sh
 
-# 确认后执行
+# 确认无误后执行
 kubectl exec -n <namespace> <pod-name> -- bash deploy.sh
 ```
 
----
+## 输出文件结构
 
-## Phase 12：输出交付
+### 部署准备阶段输出
 
-**模块：** `modules/output-guide.md`
+```
+.vllm-deploy/
+├── config.json          # 用户配置汇总
+├── image-info.json      # 镜像信息
+├── templates/           # K8s 模板文件
+│   ├── single-node.yaml
+│   ├── multi-node.yaml
+│   ├── pd-separate.yaml
+│   └── ha-active-standby.yaml
+└── scripts/             # vLLM 启动脚本模板
+    ├── start-single-node.sh
+    ├── start-multi-node-master.sh
+    ├── start-multi-node-worker.sh
+    ├── start-prefill.sh
+    └── start-decode.sh
+```
 
-**输入：** Phase 6-11 生成的所有文件
+### 部署执行阶段输出
 
-**处理：**
-1. 创建 `.vllm-deploy/k8s/` 输出目录
-2. 写入所有 YAML 和脚本文件
-3. 生成 `README.md` 执行指南（包含分步执行说明）
-
-**最终交付：**
 ```
 .vllm-deploy/k8s/
-├── README.md            # 执行指南
-├── namespace.yaml
-├── configmap.yaml
-├── deployment-node1.yaml
-├── deployment-node2.yaml
-├── service.yaml
-├── apply-all.sh         # 一键 apply 所有 YAML
-└── deploy.sh            # Pod 内部署脚本
+├── README.md            # 部署执行指南
+├── all.yaml             # 合并的 K8s 资源清单
+│   # 或分文件（多节点模式）：
+│   ├── master.yaml      # Master Deployment + Service
+│   └── worker-*.yaml    # Worker Deployment(s)
+├── scripts-configmap.yaml  # Pod 内脚本 ConfigMap
+├── apply-all.sh         # 一键部署脚本
+├── deploy.sh            # vLLM 启动脚本（Pod 内执行）
+└── detection-result.json  # K8s 环境探测结果
 ```
 
----
-
-## 快速开始
-
-1. 触发 Skill：输入 `/vllm-deploy`
-2. 系统快速获取模型列表
-3. **用户选择模型、规格（A3/A2）、部署方式、目标镜像仓库**
-4. 系统针对性解析文档（只解析用户选择的）
-5. 系统自动探测 K8s 环境和节点信息
-6. 系统自动处理镜像（拉取、打标签、推送）
-7. 通过问答确认配置参数（Namespace、模型路径、性能参数）
-8. 获取生成的 K8s YAML 文件
-9. **手动执行 `apply-all.sh`**
-10. 系统探测 Pod 内 NPU 环境
-11. 系统生成部署脚本（`deploy.sh`）
-12. **用户确认脚本内容并手动执行部署**
-
----
-
-## 文件结构
+## 项目结构
 
 ```
-vllm-skill/
-├── skill.md                    # Skill 入口
-├── skill.yaml                  # Skill 元数据
-├── modules/
-│   ├── model-list-fetcher.md        # 快速获取模型列表模块
-│   ├── user-selector.md             # 用户选择模块（含镜像仓库）
-│   ├── doc-parser.md                # 针对性文档解析模块
-│   ├── k8s-env-detector.md          # K8s 环境探测模块
-│   ├── image-handler.md             # 镜像处理模块
-│   ├── config-guide.md              # 交互配置模块
-│   ├── k8s-yaml-generator.md        # K8s YAML 生成
-│   ├── k8s-apply-guide.md           # Phase 8 用户操作指南
-│   ├── container-env-detector.md    # 容器内环境探测模块
-│   ├── deploy-generator.md          # 部署脚本生成模块
-│   ├── deploy-execution-guide.md    # Phase 11 用户操作指南
-│   └── output-guide.md              # 输出交付模块
-├── scripts/
-│   ├── fetch-model-list.sh          # 抓取模型列表脚本
-│   ├── parse-model-doc.sh           # 解析模型文档脚本
-│   ├── detect-k8s-env.sh            # K8s 环境探测脚本
-│   ├── detect-container-npu.sh      # 容器内 NPU 探测脚本
-│   └── push-image.sh                # 镜像处理脚本
-└── templates/
-    ├── k8s-namespace.yaml            # Namespace 模板
-    ├── k8s-configmap.yaml            # ConfigMap 模板
-    ├── k8s-deployment.yaml           # Deployment 模板
-    ├── k8s-service.yaml              # Service 模板
-    ├── deploy.sh                     # vllm serve 部署脚本模板
-    └── apply-all.sh                  # K8s 一键 apply 脚本模板
+vllm-ascend-deploy-skill/
+├── vllm-deploy-prepare/         # 部署准备技能
+│   ├── SKILL.md                 # 技能入口文件
+│   ├── modules/                 # 执行模块指南
+│   │   ├── model-list-fetcher.md    # 获取模型列表
+│   │   ├── user-selector.md         # 用户选择交互
+│   │   ├── doc-parser.md            # 文档解析
+│   │   ├── image-handler.md         # 镜像处理
+│   │   ├── config-guide.md          # 交互配置
+│   │   ├── template-generator.md    # 生成模板
+│   │   └── deploy-script-generator.md  # 生成启动脚本
+│   ├── scripts/                 # 辅助脚本
+│   │   ├── fetch-model-list.sh      # 抓取模型列表
+│   │   ├── parse-model-doc.sh       # 解析文档
+│   │   └── fetch-k8s-config.sh      # 获取 K8s 配置
+│   └── templates/               # K8s YAML 模板
+│       ├── single-node.yaml         # 单节点部署模板
+│       ├── multi-node.yaml          # 多节点部署模板
+│       ├── pd-separate.yaml         # PD分离模板
+│       └── ha-active-standby.yaml   # HA高可用模板
+│
+├── vllm-deploy-execute/         # 部署执行技能
+│   ├── SKILL.md                 # 技能入口文件
+│   ├── modules/                 # 执行模块指南
+│   │   ├── k8s-env-detector.md      # K8s 环境探测
+│   │   ├── yaml-generator.md        # YAML 生成
+│   │   ├── k8s-apply-guide.md       # K8s Apply 指导
+│   │   ├── container-env-detector.md # 容器内探测
+│   │   ├── deploy-generator.md      # 部署脚本生成
+│   │   ├── deploy-execution-guide.md # 部署执行指导
+│   │   └── output-guide.md          # 输出交付
+│   └── scripts/                 # 辅助脚本
+│       ├── detect-k8s-env.sh        # K8s 环境探测
+│       ├── detect-container-npu.sh  # 容器内 NPU 探测
+│       └── fill-template.sh         # 模板填充
+│
+├── docs/                        # 设计文档
+│   └── superpowers/
+│       ├── specs/               # 规格说明
+│       └── plans/               # 实现计划
+│
+└── 原始需求.md                   # 项目原始需求
 ```
 
----
+## 安全设计
 
-## 目录说明
+本技能采用 **确认执行模式**，关键操作需用户手动确认：
 
-### modules/
+| 确认点 | 用户操作 | 原因 |
+|--------|----------|------|
+| Phase 8 | 执行 `bash apply-all.sh` | K8s apply 影响集群资源 |
+| Phase 11 | 在 Pod 内执行 `deploy.sh` | 启动服务影响生产环境 |
 
-模块指南文件，描述各阶段的处理逻辑和参数。AI 读取模块描述后调用对应脚本执行操作。
+**自动执行的安全操作：**
+- 文档解析（只读）
+- K8s 环境探测（只读）
+- 镜像处理（需用户提前 docker login）
+- YAML 和脚本生成（本地文件）
 
-### scripts/
+## 常见问题
 
-预置辅助脚本，提供可靠的执行能力：
+### Q: 技能未识别？
 
-| 脚本 | 用途 | 调用阶段 |
-|------|------|---------|
-| `fetch-model-list.sh` | 抓取模型列表页并提取模型名称和链接 | Phase 1 |
-| `parse-model-doc.sh` | 解析指定模型的文档页面，提取脚本和镜像版本 | Phase 3 |
-| `detect-k8s-env.sh` | 探测 K8s 集群节点信息、NPU 数量、硬件规格 | Phase 4 |
-| `detect-container-npu.sh` | 在 Pod 内探测 NPU 设备映射情况 | Phase 9 |
-| `push-image.sh` | 拉取官方镜像、打标签、推送到用户仓库 | Phase 5 |
+确保技能目录位于 Claude Code 的 skills 目录：
+```bash
+ls ~/.claude/skills/vllm-deploy-prepare/SKILL.md
+ls ~/.claude/skills/vllm-deploy-execute/SKILL.md
+```
 
-### templates/
+### Q: K8s 集群连接失败？
 
-### k8s-namespace.yaml
+检查 kubeconfig：
+```bash
+kubectl cluster-info
+kubectl get nodes
+```
 
-Namespace 模板，用于创建部署隔离空间：
-- 替换参数：`${NAMESPACE}`、`${MODEL_NAME}`
+### Q: NPU 资源未识别？
 
-### k8s-configmap.yaml
+确认 Ascend Device Plugin 已安装：
+```bash
+kubectl get nodes --show-labels | grep ascend
+kubectl describe node <node-name> | grep davinci
+```
 
-ConfigMap 模板，存储部署配置参数：
-- 替换参数：`${NAMESPACE}`、`${MODEL_PATH}`、`${MAX_MODEL_LEN}`、`${MAX_NUM_SEQS}`、`${TENSOR_PARALLEL_SIZE}`
+### Q: 镜像推送失败？
 
-### k8s-deployment.yaml
+提前登录私有仓库：
+```bash
+docker login harbor.example.com
+```
 
-Deployment 模板，定义 Pod 运行配置：
-- 替换参数：`${NODE_NAME}`、`${NAMESPACE}`、`${IMAGE}`、`${NPU_RESOURCE_TYPE}`、`${NPU_COUNT}`、`${MODEL_MOUNT_PATH}`、`${MODEL_PATH_HOST}`
-- 支持 NPU 资源限制（`davinci` 或 `huawei.com/Ascend910`）
+## 技术栈
 
-### k8s-service.yaml
+- **Claude Code Skills** - AI 驱动的自动化框架
+- **vLLM-Ascend** - 昇腾 NPU 上的 vLLM 推理引擎
+- **Kubernetes** - 容器编排平台
+- **Ascend NPU** - 华为昇腾 AI 处理器
 
-Service 模板，暴露服务端口：
-- 替换参数：`${NAMESPACE}`、`${SERVICE_PORT}`
-- 默认端口 8000，NodePort 方式暴露
+## 相关链接
 
-### deploy.sh
+- [vLLM-Ascend 官方文档](https://docs.vllm.com.cn/projects/ascend/en/latest/)
+- [Claude Code Skills 文档](https://github.com/anthropics/claude-code)
 
-vllm serve 启动脚本模板，在 Pod 内执行：
-- 支持三种部署模式：单节点、多节点、PD分离
-- 替换参数：`${MODEL_PATH}`、`${MAX_MODEL_LEN}`、`${MAX_NUM_SEQS}`、`${TENSOR_PARALLEL_SIZE}`、`${MASTER_ADDR}`、`${MASTER_PORT}`、`${RANK}`
+## 许可证
 
-### apply-all.sh
-
-K8s 一键 apply 脚本模板：
-- 按顺序 apply 所有 YAML 文件
-- 自动等待 Pod 就绪
-- 替换参数：`${NAMESPACE}`
-
----
-
-## 错误处理
-
-| 场景 | 处理方式 |
-|-----|---------|
-| 默认 URL 无法访问 | 提示检查网络或 vLLM-Ascend 文档站点状态 |
-| 模型列表提取失败 | 建议手动指定模型教程 URL |
-| 脚本块未找到 | 建议手动提供脚本 |
-| kubectl 不可用 | 提示安装 kubectl 并配置 kubeconfig |
-| 非管理节点执行 | 提示切换到管理节点或确保有集群管理权限 |
-| K8s 集群连接失败 | 提示检查 kubeconfig 配置和网络连通性 |
-| Docker 不可用（镜像处理） | 提示在有 Docker 的节点执行镜像处理步骤 |
-| 镜像仓库登录失败 | 提示检查镜像仓库地址和认证信息 |
-| 镜像推送失败 | 提示检查镜像仓库权限和网络连通性 |
-| NPU 资源未注册 | 提示检查 Ascend Device Plugin 是否正确安装 |
-| Pod 启动失败 | 提示检查镜像、资源和节点状态 |
-| 容器内 NPU 映射异常 | 提示检查 Device Plugin 配置 |
+MIT License
