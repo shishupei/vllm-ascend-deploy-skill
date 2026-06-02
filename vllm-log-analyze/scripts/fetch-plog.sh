@@ -91,7 +91,6 @@ for log_type in $(echo "$PLOG_TYPES" | jq -r '.[]'); do
 
     if [ ! -d "$type_dir" ]; then
         echo "Warning: log type directory '$type_dir' not found, skipping" >&2
-        echo "[]" > "$temp_file"
         continue
     fi
 
@@ -100,7 +99,6 @@ for log_type in $(echo "$PLOG_TYPES" | jq -r '.[]'); do
 
     if [ -z "$log_files" ]; then
         echo "Warning: no log files found in '$type_dir'" >&2
-        echo "[]" > "$temp_file"
         continue
     fi
 
@@ -160,10 +158,19 @@ for log_type in $(echo "$PLOG_TYPES" | jq -r '.[]'); do
     echo "$log_type: $FILTERED_LINES filtered lines so far" >&2
 done
 
-# 使用 jq 合并各类型日志为数组
-device_logs=$(jq -s '.' "$TEMP_DEVICE" 2>/dev/null || echo "[]")
-host_logs=$(jq -s '.' "$TEMP_HOST" 2>/dev/null || echo "[]")
-app_logs=$(jq -s '.' "$TEMP_APP" 2>/dev/null || echo "[]")
+# 使用 jq 合并各类型日志为数组（flatten 处理嵌套数组）
+collect_logs() {
+    local temp_file="$1"
+    if [ -s "$temp_file" ]; then
+        jq -s 'flatten' "$temp_file" 2>/dev/null || echo "[]"
+    else
+        echo "[]"
+    fi
+}
+
+device_logs=$(collect_logs "$TEMP_DEVICE")
+host_logs=$(collect_logs "$TEMP_HOST")
+app_logs=$(collect_logs "$TEMP_APP")
 
 # 输出 JSON 结果
 cat <<EOF
