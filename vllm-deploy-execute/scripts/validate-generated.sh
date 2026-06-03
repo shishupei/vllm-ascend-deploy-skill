@@ -37,16 +37,23 @@ if [ ! -f "$K8S_DIR/all.yaml" ]; then
     exit 1
 fi
 
-# Use grep -rn instead of rg (ripgrep) for portability
-if grep -rn '\$\{[A-Z0-9_]+\}' "$K8S_DIR" >/tmp/vllm-unresolved-vars.txt; then
+# Use grep -Ern (extended regex, recursive) instead of rg (ripgrep) for portability
+# Exclude known runtime env vars that legitimately remain in generated YAML
+# (they are expanded by the shell inside the container, not by envsubst)
+RUNTIME_ENV_VARS='HCCL_IF_IP|GLOO_SOCKET_IFNAME|RDMAV_HUGEPAGES_SAFE_MALLOC|VLLM_WORKER_MULTIPROC_METHOD'
+if grep -Ern '\$\{[A-Z0-9_]+\}' "$K8S_DIR" | grep -Ev '\$\{('${RUNTIME_ENV_VARS}')\}' >/tmp/vllm-unresolved-vars.txt; then
     echo "Error: generated artifacts contain unresolved template variables:" >&2
     cat /tmp/vllm-unresolved-vars.txt >&2
     exit 1
 fi
 
-if grep -n 'name: .*[^a-z0-9.-]' "$K8S_DIR/all.yaml" >/tmp/vllm-name-lines.txt; then
+if grep -En 'name: .*[^a-z0-9.-]' "$K8S_DIR/all.yaml" >/tmp/vllm-name-lines.txt; then
     while IFS= read -r line; do
         name_value=$(printf '%s' "$line" | sed -E 's/^.*name:[[:space:]]*"?([^"#]+)"?.*$/\1/')
+        # Skip env var names (uppercase first char) — they are not Kubernetes identifiers
+        if printf '%s' "$name_value" | grep -qE '^[A-Z]'; then
+            continue
+        fi
         if ! printf '%s' "$name_value" | grep -Eq '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'; then
             echo "Error: generated Kubernetes name is not DNS-safe: $name_value" >&2
             exit 1
