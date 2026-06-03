@@ -1,226 +1,290 @@
-# vLLM Deploy Skill 检视意见（基于 README 原始需求）
+# vLLM Deploy Skill 检视意见
 
-日期：2026-05-21
+日期：2026-06-03
 
 审查对象：
 
-- 分支：`chore/vllm-deploy-worktree-base-20260514`
-- HEAD：`c7e4131`
-- 对比基线：`473d92c`
-- 需求真源：`README.md`
+- 分支：`master`
+- HEAD：`9d4a290370c05a0f13e858553700d5d545654776`
+- 审查范围：当前工作区未提交改动
+- 需求真源：`原始需求.md`
 
 ## 范围
 
-本次检视以仓库根目录 `README.md` 描述的 Phase 1-12 端到端流程作为原始需求，对照当前实现的脚本、模板和执行链路，重点检查：
+本次检视聚焦当前工作区相对 `HEAD` 的改动，重点检查：
 
-- 现在的实现是否还能按 `README.md` 指定流程走通
-- 输出给用户的文档和脚本是否与真实生成物一致
-- `multi_node` 路径是否仍有实际阻断问题
+- `vllm-deploy-execute/scripts/fill-template.sh` 的模板填充和输出契约
+- `vllm-deploy-prepare/templates/*.yaml` 的 K8s 可应用性
+- `vllm-deploy-execute/modules/*.md`、`README.md` 与真实生成物是否一致
+- 原始需求中 Phase 8-11 的用户执行链路是否仍可走通
 
 ## 结论
 
-**如果 `README.md` 仍然是需求真源，当前实现仍不满足合并条件。**
+当前改动仍不满足合并条件。
 
-与前一版审查相比，`deploy.sh` 独立生成、`master_node` 选择冲突、旧三参数兼容、`WORLD_SIZE` 回退逻辑这几项已经修复；但当前 `HEAD` 仍有三类问题：
+与上一版检视相比，以下问题已有明显改善：
 
-1. `prepare` 阶段输出的模板与 `execute` 阶段实际消费的模板集合不一致，`multi_node` 在干净环境中会直接失败。
-2. Phase 9 探测结果没有被 Phase 10 消费，当前 `deploy.sh` 仍然不是“基于容器内探测结果生成”。
-3. 生成给用户的 `README.md` 与实际执行链路不一致，用户按文档操作无法完成部署。
+- `multi_node` 的执行侧已改为读取 `multi-node-master.yaml` 和 `multi-node-worker.yaml`
+- `selected-nodes.json` 字符串数组格式的入口解析已改为类型判断
+- 生成的 `.vllm-deploy/k8s/README.md` 已补充 `kubectl cp deploy.sh` 和 `kubectl exec` 步骤
+
+但当前仍有两个阻断级问题：
+
+1. K8s 资源名直接拼接原始模型名，示例模型名含大写和点号，`kubectl apply` 会因资源名不满足 Kubernetes 命名约束而失败。
+2. 原始需求要求 Phase 10 根据容器内 NPU 探测结果生成 `deploy.sh`，当前实现仍在模板填充阶段提前生成脚本，且 `--tensor-parallel-size` 只来自 `config.json`。
+
+另有若干重要问题会继续误导代理或用户操作。
 
 ## 发现的问题
 
 ### Critical
 
-1. `multi_node` 在干净输出目录中无法生成 YAML，`prepare` 与 `execute` 的模板契约已经断链
+1. K8s 资源名直接使用原始 `selected_model`，常见模型名会生成非法资源名
 
 参考：
 
-- `vllm-deploy-prepare/modules/template-generator.md:16`
-- `vllm-deploy-prepare/modules/template-generator.md:29`
-- `vllm-deploy-prepare/modules/template-generator.md:90`
-- `vllm-deploy-execute/modules/yaml-generator.md:57`
-- `vllm-deploy-execute/scripts/fill-template.sh:111`
-- `vllm-deploy-execute/scripts/fill-template.sh:144`
-- `vllm-deploy-execute/scripts/fill-template.sh:162`
+- `原始需求.md:32`
+- `原始需求.md:33`
+- `原始需求.md:34`
+- `原始需求.md:59`
+- `vllm-deploy-execute/scripts/fill-template.sh:82`
+- `vllm-deploy-prepare/templates/single-node.yaml:52`
+- `vllm-deploy-prepare/templates/multi-node-master.yaml:58`
+- `vllm-deploy-prepare/templates/multi-node-worker.yaml:9`
+- `vllm-deploy-prepare/templates/pd-separate.yaml:62`
+- `vllm-deploy-prepare/templates/pd-separate.yaml:183`
+- `vllm-deploy-prepare/templates/ha-active-standby.yaml:54`
+- `vllm-deploy-prepare/templates/ha-active-standby.yaml:187`
+- `vllm-deploy-prepare/templates/ha-active-standby.yaml:219`
+- `vllm-deploy-prepare/templates/pd-separate-kthena.yaml:27`
+- `vllm-deploy-prepare/templates/pd-separate-kthena.yaml:265`
+- `vllm-deploy-prepare/templates/pd-separate-kthena.yaml:291`
 
 问题：
 
-- `prepare` 阶段文档声明 `multi_node` 只会复制 `multi-node.yaml` 到 `.vllm-deploy/templates/`。
-- `execute` 阶段实际却不再读取 `multi-node.yaml`，而是强依赖 `multi-node-master.yaml` 和 `multi-node-worker.yaml`。
-- 这不是单纯文档未同步，而是实际输入工件集合已经变了，但上游交付物没有一起更新。
-
-本地复现摘要：
-
-- 在全新临时目录中只放入 `prepare` 阶段承诺的 `multi-node.yaml`。
-- 执行：
-  - `bash vllm-deploy-execute/scripts/fill-template.sh .vllm-deploy/config.json .vllm-deploy/detection-result.json .vllm-deploy/k8s`
-- 实际报错：
-  - `sed: can't read .vllm-deploy/templates/multi-node-master.yaml: No such file or directory`
+- 原始需求和准备阶段示例里的模型名包括 `GLM-5`、`Qwen2.5-7B`、`DeepSeek-V3.1`。
+- `fill-template.sh` 将 `config.json.selected_model` 原样导出为 `MODEL_NAME`。
+- 多个模板把 `${MODEL_NAME}` 直接拼进 `metadata.name`，例如 `vllm-${MODEL_NAME}`、`vllm-${MODEL_NAME}-master`、`${MODEL_NAME}-server`。
+- Kubernetes 资源名通常要求 DNS-1123 风格的小写名称；上述示例会生成包含大写字母的资源名，`kubectl apply` 阶段会被 API 校验拦截。
 
 影响：
 
-- 只要按当前 `prepare` 文档和输出结构运行，`multi_node` 就无法进入 Phase 8。
-- 这是端到端主路径直接中断的问题。
+- 用户按当前主流程选择 `GLM-5` 或 `Qwen2.5-7B` 后，生成的 YAML 无法可靠 apply。
+- 这会阻断 Phase 8，后续 Phase 9-11 无法开始。
 
-2. Phase 9 的容器内探测结果没有进入 Phase 10，`deploy.sh` 仍然不是按 README 要求“基于探测结果生成”
+建议：
+
+- 增加独立的 K8s 安全名称变量，例如 `MODEL_RESOURCE_NAME` 或 `APP_NAME`。
+- 该变量应由 `selected_model` 规范化得到：小写、非法字符替换为 `-`、去除首尾 `-`、必要时截断。
+- `metadata.name`、固定 label selector、README 中的 `kubectl get -l ...` 使用规范化变量。
+- `vllm serve --served-model-name` 保留原始模型名，避免改变 API 暴露的模型名称。
+
+2. Phase 9 容器内探测结果仍未进入 Phase 10，`deploy.sh` 不是按原始需求生成
 
 参考：
 
-- `README.md:226`
-- `README.md:253`
+- `原始需求.md:249`
+- `原始需求.md:253`
+- `原始需求.md:256`
+- `原始需求.md:257`
 - `vllm-deploy-execute/modules/container-env-detector.md:23`
-- `vllm-deploy-execute/modules/deploy-generator.md:5`
-- `vllm-deploy-execute/scripts/detect-container-npu.sh:42`
+- `vllm-deploy-execute/modules/container-env-detector.md:61`
+- `vllm-deploy-execute/modules/deploy-generator.md:9`
+- `vllm-deploy-execute/modules/deploy-generator.md:11`
+- `vllm-deploy-execute/modules/deploy-generator.md:12`
+- `vllm-deploy-execute/scripts/fill-template.sh:86`
+- `vllm-deploy-execute/scripts/fill-template.sh:88`
 - `vllm-deploy-execute/scripts/fill-template.sh:269`
-- `vllm-deploy-execute/scripts/fill-template.sh:282`
+- `vllm-deploy-execute/scripts/fill-template.sh:283`
+- `vllm-deploy-execute/scripts/fill-template.sh:285`
 
 问题：
 
-- `README.md` 的 Phase 9 要先在 Pod 内探测 `npu_count`、`npu_devices`、`npu_smi_available`。
-- `deploy-generator.md` 也明确写了“根据容器内 NPU 探测结果生成 Pod 内执行脚本”。
-- 但当前 `deploy.sh` 是在 `fill-template.sh` 中和 YAML 同时生成的，只读取 `config.json`，并未读取任何容器探测结果文件或命令输出。
-- 生成的 `--tensor-parallel-size` 仍完全依赖 Phase 6 的 `config.json`，不是 Phase 9 的探测结果。
+- 原始需求写明 Phase 10 输入是“容器内探测结果 + 用户配置”，并要求根据容器内 NPU 数量设置 `--tensor-parallel-size`。
+- 当前 `deploy.sh` 在 `fill-template.sh` 中生成，发生在 Phase 7 模板填充阶段，而不是 Phase 9 容器内探测之后。
+- `deploy.sh` 中的 `--tensor-parallel-size` 使用 `${TENSOR_PARALLEL_SIZE}`，该变量来自 `config.json`，没有读取 `/scripts/detect-npu.sh` 或 Phase 9 输出。
+- `deploy-generator.md` 也已改成只列出 `config.json` 和 `detection-result.json`，不再列出容器内探测结果。
 
 影响：
 
-- 当前实现虽然重新引入了独立 `deploy.sh`，但并没有真正实现 README 定义的 Phase 9 -> Phase 10 数据闭环。
-- 如果容器内实际可见 NPU 数与预期不一致，脚本不会被调整，用户仍可能在 Phase 11 执行错误配置。
+- 如果容器内实际可见 NPU 数量和配置值不一致，生成脚本仍会用旧配置启动。
+- Phase 9 在当前链路里只剩“人工观察”价值，没有对 Phase 10 的生成结果产生约束。
+- 这与 `原始需求.md` 的 Phase 9 -> Phase 10 数据闭环不一致。
+
+建议：
+
+- 如果原始需求仍有效，应把 `deploy.sh` 的生成移动到容器内探测之后，或至少让脚本读取保存下来的容器探测 JSON。
+- 如果决定废弃该闭环，应同步修改 `原始需求.md`、`container-env-detector.md`、`deploy-generator.md` 和 README，明确 Phase 9 只做诊断不参与脚本参数生成。
 
 ### Important
 
-1. 当前生成给用户的 `.vllm-deploy/k8s/README.md` 与真实执行链路冲突，缺少 Phase 9-11 的关键操作
+1. 多节点文档要求在每个 Worker Pod 内执行同一份 `deploy.sh`，与 Ray Worker 的职责边界冲突
 
 参考：
 
+- `README.md:271`
+- `README.md:273`
 - `README.md:275`
-- `README.md:307`
-- `vllm-deploy-execute/modules/deploy-execution-guide.md:18`
-- `vllm-deploy-execute/scripts/fill-template.sh:335`
-- `vllm-deploy-execute/scripts/fill-template.sh:348`
-- `vllm-deploy-execute/scripts/fill-template.sh:359`
-- `vllm-deploy-prepare/templates/single-node.yaml:78`
+- `vllm-deploy-execute/modules/deploy-execution-guide.md:36`
+- `vllm-deploy-execute/modules/deploy-execution-guide.md:45`
+- `vllm-deploy-execute/modules/deploy-execution-guide.md:47`
+- `vllm-deploy-execute/modules/deploy-generator.md:51`
+- `vllm-deploy-execute/modules/deploy-generator.md:60`
+- `vllm-deploy-execute/scripts/fill-template.sh:272`
+- `vllm-deploy-execute/scripts/fill-template.sh:283`
+- `vllm-deploy-execute/scripts/fill-template.sh:288`
+- `vllm-deploy-prepare/templates/multi-node-worker.yaml:45`
+- `vllm-deploy-prepare/templates/multi-node-worker.yaml:46`
+- `vllm-deploy-prepare/templates/multi-node-worker.yaml:49`
 
 问题：
 
-- 生成的 `.vllm-deploy/k8s/README.md` 只告诉用户：
-  - 执行 `bash apply-all.sh`
-  - `kubectl get pods`
-  - `curl /v1/models`
-- 但当前 Pod 模板实际会 `tail -f /dev/null` 等待人工把 `deploy.sh` 复制进 Pod 并手动执行。
-- 生成的 README 完全没有写：
-  - 如何执行容器内 NPU 探测
-  - 如何 `kubectl cp deploy.sh`
-  - 如何 `kubectl exec ... bash /tmp/deploy.sh`
-
-本地渲染结果摘要：
-
-- `single_node` 生成的 README 在“部署步骤”后直接让用户访问服务。
-- 同一次渲染生成的 Pod YAML 明确显示容器会一直等待用户手动执行 `deploy.sh`。
+- Worker 模板已经在容器启动命令中执行 `ray start --address=...`，然后 `tail -f /dev/null`。
+- 生成的多节点 `deploy.sh` 是完整的 `vllm serve ... --distributed-executor-backend ray --port 8000`。
+- README 和模块文档要求把同一份 `deploy.sh` 先后复制到 Master 和每个 Worker Pod 内执行。
+- 这意味着每个 Worker 都会再启动一份 vLLM API server/engine，而不是只作为 Ray worker 提供资源。
 
 影响：
 
-- 用户按当前交付 README 操作，最多只会把等待中的 Pod 部署出来，并不会真正启动 vLLM 服务。
-- 这是用户交付物与实际运行行为冲突，不是低优先级文档润色问题。
+- 在真实多节点 Ray 部署中，这很可能导致重复服务进程、资源竞争，或多个 Pod 同时尝试调度同一 Ray 集群资源。
+- 当前没有真实集群验证证明“每个 worker 都执行同一份 `vllm serve`”是 vLLM-Ray 的正确操作模型。
 
-2. `selected-nodes.json` 的“字符串数组格式支持”仍然在入口处失效
+建议：
+
+- 明确多节点启动契约：通常应由 Worker Pod 加入 Ray 集群，`vllm serve` 只在 Master/Head 上执行一次。
+- 如果确实需要 Worker 执行不同脚本，应生成 `deploy-master.sh` 和 `deploy-worker.sh`，不要让所有 Pod 执行同一份完整 API server 脚本。
+- 在有 K8s + NPU 的真实环境中补充多节点端到端验证。
+
+2. `envsubst` 成为执行阶段硬依赖，但前置条件和错误处理没有声明
 
 参考：
 
-- `vllm-deploy-execute/scripts/fill-template.sh:42`
-- `vllm-deploy-execute/scripts/fill-template.sh:48`
-- `vllm-deploy-execute/scripts/fill-template.sh:127`
-- `vllm-deploy-execute/scripts/fill-template.sh:156`
+- `README.md:151`
+- `README.md:156`
+- `vllm-deploy-execute/SKILL.md:8`
+- `vllm-deploy-execute/SKILL.md:11`
+- `vllm-deploy-execute/scripts/fill-template.sh:4`
+- `vllm-deploy-execute/scripts/fill-template.sh:118`
 
 问题：
 
-- 脚本后半段已经为对象格式和字符串格式加了类型判断。
-- 但在进入 `multi_node` 分支之前，入口仍先执行：
-  - `SELECTED_MASTER=$(jq -r '.master_node // .nodes[0].name // .nodes[0]' "$NODES_FILE")`
-- 当 `.nodes[0]` 本身是字符串时，这里会先触发 `jq: Cannot index string with string "name"`，后面的兼容逻辑根本无法生效。
-
-本地复现摘要：
-
-- 输入：
-  - `{"master_node":"node-b","nodes":["node-a","node-b"]}`
-- 直接执行上述 `jq` 表达式会报：
-  - `jq: error ... Cannot index string with string "name"`
+- 当前模板填充从 `sed` 改为 `envsubst`。
+- README 的执行阶段前置条件只写了 `kubectl` 和 `jq`。
+- `vllm-deploy-execute/SKILL.md` 前置条件只写了 `kubectl` 和 kubeconfig。
+- 脚本没有在开头检查 `envsubst` 是否存在。
 
 影响：
 
-- 当前代码实际只稳定支持对象数组格式。
-- 如果继续宣称支持字符串数组格式，节点确认链路的兼容性声明仍然是不成立的。
+- 在没有安装 `gettext`/`envsubst` 的 K8s 管理节点上，Phase 7 会直接 `command not found`。
+- 用户会以为前置条件满足，却在模板填充中断。
+
+建议：
+
+- 在 `fill-template.sh` 开头增加 `command -v envsubst` 检查和明确报错。
+- README 与 `vllm-deploy-execute/SKILL.md` 增加 `envsubst` 或 `gettext` 依赖说明。
+
+3. Phase 8 apply 指导仍展示旧文件名，和当前生成物不一致
+
+参考：
+
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:29`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:30`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:31`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:32`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:33`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:41`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:42`
+- `vllm-deploy-execute/modules/k8s-apply-guide.md:45`
+- `vllm-deploy-execute/modules/yaml-generator.md:75`
+- `vllm-deploy-execute/modules/yaml-generator.md:80`
+- `vllm-deploy-execute/scripts/fill-template.sh:212`
+- `vllm-deploy-execute/scripts/fill-template.sh:213`
+- `vllm-deploy-execute/scripts/fill-template.sh:325`
+
+问题：
+
+- 当前脚本生成并 apply 的核心文件是 `all.yaml`。
+- 多节点额外生成 `master.yaml` 和 `worker-*.yaml`，但 `apply-all.sh` 仍只执行 `kubectl apply -f all.yaml`。
+- `k8s-apply-guide.md` 的指导输出仍列出 `namespace.yaml`、`configmap.yaml`、`deployment*.yaml`、`service.yaml`，并提供这些旧文件的手动 apply 命令。
+
+影响：
+
+- 代理按该模块提示用户时，会给出不存在的文件名。
+- 用户如果选择“手动 apply”路径，会在 Phase 8 直接失败。
+
+建议：
+
+- 将 Phase 8 指导输出改为以 `all.yaml` 为主。
+- 手动 apply 备选方案应是 `kubectl apply -f all.yaml`，多节点分文件只作为调试查看对象，不作为默认 apply 路径。
 
 ### Medium
 
-1. 仓库内关于输出工件的说明仍然存在三套互相冲突的口径
+1. `deploy-generator.md` 已被改成“按模式生成脚本”，但执行链路实际仍由 `fill-template.sh` 生成脚本
 
 参考：
 
-- `README.md:300`
-- `vllm-deploy-execute/SKILL.md:46`
-- `vllm-deploy-execute/modules/yaml-generator.md:74`
-- `vllm-deploy-execute/modules/deploy-generator.md:63`
+- `vllm-deploy-execute/modules/deploy-generator.md:43`
+- `vllm-deploy-execute/modules/deploy-generator.md:47`
+- `vllm-deploy-execute/scripts/fill-template.sh:269`
+- `vllm-deploy-execute/scripts/fill-template.sh:312`
+- `vllm-deploy-execute/scripts/fill-template.sh:313`
 
 问题：
 
-- `README.md` 已经更新为 `all.yaml` / `master.yaml` / `worker-*.yaml` / `deploy.sh`。
-- `vllm-deploy-execute/SKILL.md` 仍写着会输出 `scripts-configmap.yaml`。
-- `modules/yaml-generator.md` 仍写着 `namespace.yaml`、`configmap.yaml`、`deployment-master.yaml`、`service.yaml`。
-- `modules/deploy-generator.md` 仍写着多节点会生成 `deploy-master.sh`、`deploy-worker-1.sh`，而当前实现只生成一个统一的 `deploy.sh`。
+- `deploy-generator.md` 描述 Phase 10 负责“生成脚本到 `.vllm-deploy/k8s/`”。
+- 实际脚本生成逻辑已经在 Phase 7 的 `fill-template.sh` 内完成。
 
 影响：
 
-- 后续评审、测试和人工操作都很难基于同一份契约工作。
-- 这类漂移已经开始影响真实实现判断，而不只是文档质量问题。
+- 模块边界和真实实现不一致，后续维护时容易继续把 Phase 10 写成独立生成步骤。
+- 这也是 Phase 9 探测结果无法参与 Phase 10 的直接原因之一。
+
+建议：
+
+- 要么把脚本生成从 `fill-template.sh` 拆回 Phase 10。
+- 要么把 `deploy-generator.md` 改成“展示并校验已生成脚本”，并明确不会重新生成。
 
 ## 已执行验证
 
-- 阅读 `README.md`，按 Phase 1-12 理解原始需求
-- 阅读 `vllm-deploy-prepare/SKILL.md`
-- 阅读 `vllm-deploy-execute/SKILL.md`
-- 阅读 `vllm-deploy-prepare/modules/template-generator.md`
-- 阅读 `vllm-deploy-execute/modules/yaml-generator.md`
-- 阅读 `vllm-deploy-execute/modules/container-env-detector.md`
-- 阅读 `vllm-deploy-execute/modules/deploy-generator.md`
+本次已执行：
+
+- `git status --short --branch`
+- `git diff --stat`
+- `git diff --name-status`
+- 审阅 `README.md`
+- 审阅 `原始需求.md`
+- 审阅 `vllm-deploy-execute/SKILL.md`
+- 审阅 `vllm-deploy-execute/modules/k8s-apply-guide.md`
+- 审阅 `vllm-deploy-execute/modules/container-env-detector.md`
+- 审阅 `vllm-deploy-execute/modules/deploy-generator.md`
+- 审阅 `vllm-deploy-execute/modules/deploy-execution-guide.md`
+- 审阅 `vllm-deploy-execute/modules/yaml-generator.md`
 - 审阅 `vllm-deploy-execute/scripts/fill-template.sh`
 - 审阅 `vllm-deploy-execute/scripts/detect-container-npu.sh`
-- 审阅 `vllm-deploy-prepare/templates/single-node.yaml`
-- 在隔离临时目录中做最小本地复现，验证：
-  - `multi_node` 只提供 `multi-node.yaml` 时会因缺少 `multi-node-master.yaml` 直接失败
-  - `single_node` 生成的 README 未包含 Phase 9-11 所需手动步骤
-  - 字符串数组格式 `selected-nodes.json` 在入口 jq 表达式处就会报错
+- 审阅 `vllm-deploy-execute/scripts/detect-k8s-env.sh`
+- 审阅 `vllm-deploy-prepare/templates/*.yaml` 的关键改动
+- 执行 `bash -n` 检查当前改动涉及的 shell 脚本语法
+- 执行 `command -v envsubst`，确认当前审查环境存在 `/usr/bin/envsubst`
+- 执行 `command -v kubectl`，当前审查环境未安装 `kubectl`
+- 使用 `rg` 交叉检查 `${MODEL_NAME}`、`envsubst`、输出文件名和 Phase 8-11 文档口径
 
 本次未执行：
 
-- 真实 K8s 集群部署
-- Pod 内实际 `ray` / `vllm` 启动验证
-- `prepare` 阶段真实对模板复制动作的交互式验收
+- 真实 K8s 集群 `kubectl apply`
+- Kubernetes API server 对生成 YAML 的服务端校验
+- Pod 内真实 `/scripts/detect-npu.sh` 执行
+- vLLM-Ray 多节点真实启动验证
+- 昇腾 NPU 设备挂载验证
 
 ## 建议的下一步
 
-1. 先修复 `prepare`/`execute` 模板契约断链：
-   - 要么 `prepare` 阶段输出 `multi-node-master.yaml` 和 `multi-node-worker.yaml`
-   - 要么 `execute` 阶段恢复消费 `multi-node.yaml`
-
-2. 明确实现 Phase 9 -> Phase 10 的数据传递：
-   - 至少让 `deploy.sh` 的关键参数来自容器内探测结果，而不是只来自 `config.json`
-   - 如果不打算这么做，就需要同步修改 `README.md`、模块文档和设计文档，明确废弃该要求
-
-3. 重写生成的 `.vllm-deploy/k8s/README.md`：
-   - 加入容器探测命令
-   - 加入 `kubectl cp deploy.sh`
-   - 加入 `kubectl exec ... bash /tmp/deploy.sh`
-   - 对多节点补充执行顺序说明
-
-4. 修正 `selected-nodes.json` 入口解析：
-   - 在首次读取 `SELECTED_MASTER` 时就做类型判断
-   - 或明确只支持对象数组格式，并删除所有字符串数组兼容声明
-
-5. 清理文档口径：
-   - `README.md`
-   - `vllm-deploy-execute/SKILL.md`
-   - `modules/yaml-generator.md`
-   - `modules/deploy-generator.md`
+1. 先修复 K8s 安全资源名问题，引入原始模型名和资源名两个变量。
+2. 决定是否保留原始需求中的 Phase 9 -> Phase 10 数据闭环：
+   - 保留：把 `deploy.sh` 生成移动到容器探测之后，并消费探测结果。
+   - 废弃：同步修改原始需求和所有 Phase 9/10 文档。
+3. 重新确认多节点 vLLM-Ray 启动模型，避免在所有 Worker 上执行同一份完整 `vllm serve`。
+4. 补齐 `envsubst` 依赖检查和文档前置条件。
+5. 更新 `k8s-apply-guide.md`，删除旧的 `namespace.yaml/configmap.yaml/deployment.yaml/service.yaml` 手动 apply 指导。
 
 ## 评估
 
@@ -228,4 +292,27 @@ Ready to merge：**No**
 
 Reasoning：
 
-当前 `HEAD` 已修复上一轮 review 中的若干实现缺陷，但端到端主路径仍存在断链：`multi_node` 在干净环境中无法生成 YAML，且交付给用户的 README 不能指导完成 Phase 9-11。只要 `README.md` 仍是需求真源，这些问题都属于阻断项。
+当前改动已经修复了上一轮中的部分契约漂移，但仍存在会阻断 `kubectl apply` 的资源命名问题，以及原始需求定义的容器探测到脚本生成的数据闭环缺失。多节点启动步骤也需要真实环境验证或架构修正后再进入合并。
+
+## 2026-06-03 修复验证更新
+
+本轮已修复：
+
+- K8s 资源名规范化
+- Phase 9 容器探测结果进入 Phase 10 `deploy.sh` 生成
+- 多节点 `deploy.sh` 改为 Master Pod 专用
+- `envsubst` / `jq` / `kubectl` 依赖声明和脚本检查
+- Phase 8-10 文档口径统一
+
+本轮已执行：
+
+- `bash -n vllm-deploy-prepare/scripts/*.sh vllm-deploy-execute/scripts/*.sh`
+- `bash tests/run-local-verification.sh`
+- 生成物未替换变量扫描
+- 旧文件名和旧多节点执行指令扫描
+
+仍未执行：
+
+- 真实 K8s 集群 `kubectl apply`
+- 真实 Pod 内 NPU 探测
+- 真实 vLLM-Ray 多节点启动
