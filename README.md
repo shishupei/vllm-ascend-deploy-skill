@@ -117,10 +117,10 @@
    - `all.yaml`
    - `master.yaml` / `worker-*.yaml`（多节点时）
    - `apply-all.sh`
-   - `deploy.sh`（仅 `single_node` / `multi_node`）
    - `.vllm-deploy/k8s/README.md`
 4. 用户手动执行 `bash apply-all.sh`。
-5. Pod 启动后，代理继续指导容器内探测和服务启动。
+5. Pod 启动后，运行容器内 NPU 探测，再由 `generate-deploy.sh` 生成 `deploy.sh`（仅 `single_node` / `multi_node`）。
+6. 代理继续指导容器内最终启动和服务验证。
 
 ### 人工确认点
 
@@ -232,12 +232,14 @@ cp -r vllm-deploy-execute ~/.codex/skills/
 ```text
 .vllm-deploy/
 ├── detection-result.json
+├── container-detection-result.json
 ├── selected-nodes.json
 └── k8s/
     ├── all.yaml
     ├── master.yaml
     ├── worker-*.yaml
     ├── apply-all.sh
+    ├── deploy.sh  （仅 single_node / multi_node）
     └── README.md
 ```
 

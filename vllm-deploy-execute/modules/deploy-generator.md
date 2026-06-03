@@ -9,14 +9,14 @@
 ## 输入
 
 - `.vllm-deploy/config.json` - 用户配置
-- `.vllm-deploy/container-detection.json` - Phase 9 容器内 NPU 探测结果
+- `.vllm-deploy/container-detection-result.json` - Phase 9 容器内 NPU 探测结果
 
 ## 脚本生成逻辑
 
 执行 `scripts/generate-deploy.sh`，该脚本：
 
 1. 读取 `config.json` 获取 `deploy_mode`、`model_path`、`selected_model`、`max_model_len`、`max_num_seqs`
-2. 读取 `container-detection.json` 获取容器内实际 NPU 数量
+2. 读取 `container-detection-result.json` 获取容器内实际 NPU 数量
 3. 使用容器内探测到的 NPU 数量设置 `--tensor-parallel-size`
 4. 仅在 `single_node` 或 `multi_node` 模式下生成 `deploy.sh`
 
@@ -47,8 +47,8 @@ vllm serve "${MODEL_PATH}" \
 
 ## AI 执行指南
 
-1. 确认 Phase 9 已完成，`.vllm-deploy/container-detection.json` 存在
-2. 执行 `scripts/generate-deploy.sh .vllm-deploy/config.json .vllm-deploy/container-detection.json .vllm-deploy/k8s`
+1. 确认 Phase 9 已完成，`.vllm-deploy/container-detection-result.json` 存在
+2. 执行 `scripts/generate-deploy.sh .vllm-deploy/config.json .vllm-deploy/container-detection-result.json .vllm-deploy/k8s`
 3. 展示生成的脚本内容
 4. 进入 Phase 11
 

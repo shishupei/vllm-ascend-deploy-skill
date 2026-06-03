@@ -26,7 +26,7 @@ vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
 2. **Phase 7（补）**: `modules/yaml-generator.md` - 填充模板生成 YAML
 3. **Phase 8**: `modules/k8s-apply-guide.md` - K8s Apply 指导（等待用户确认）
 4. **Phase 9**: `modules/container-env-detector.md` - 容器内 NPU 探测
-5. **Phase 10**: `modules/deploy-generator.md` - 生成部署脚本
+5. **Phase 10**: `modules/deploy-generator.md` - 生成部署脚本（执行 `scripts/generate-deploy.sh`，仅 `single_node` / `multi_node`）
 6. **Phase 11**: `modules/deploy-execution-guide.md` - 部署执行指导（等待用户确认）
 7. **Phase 12**: `modules/output-guide.md` - 输出交付
 
@@ -46,14 +46,16 @@ vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
 ## 输出
 
 生成 `.vllm-deploy/k8s/` 目录，包含：
-- `all.yaml` - 合并的 K8s 资源清单（Namespace、ConfigMap、Deployment、Service）
+- `all.yaml` - 合并的 K8s 资源清单
 - `master.yaml` - 仅多节点模式：Master 节点清单
 - `worker-*.yaml` - 仅多节点模式：Worker 节点清单（按节点编号）
 - `apply-all.sh` - 一键部署脚本
 - `README.md` - 部署指南
+- `deploy.sh` - 仅 `single_node` / `multi_node`：Pod 内 vLLM 启动脚本（Phase 10 生成）
 
 以及：
 - `detection-result.json` - K8s 环境探测结果
+- `container-detection-result.json` - 容器内 NPU 探测结果
 
 ## 用户确认点
 

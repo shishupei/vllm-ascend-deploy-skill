@@ -27,10 +27,9 @@
 
 目录：.vllm-deploy/k8s/
 文件：
-- namespace.yaml
-- configmap.yaml
-- deployment*.yaml
-- service.yaml
+- all.yaml
+- master.yaml（仅 multi_node）
+- worker-*.yaml（仅 multi_node）
 - apply-all.sh
 - README.md
 
@@ -39,10 +38,7 @@
 2. bash apply-all.sh
 
 或手动执行：
-kubectl apply -f namespace.yaml
-kubectl apply -f configmap.yaml
-kubectl apply -f deployment.yaml
-kubectl apply -f service.yaml
+kubectl apply -f all.yaml
 
 完成后请回复 "部署完成" 或报告错误信息。
 ```

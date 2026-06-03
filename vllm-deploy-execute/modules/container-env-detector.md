@@ -37,7 +37,11 @@
 
 ## 输出
 
-容器内 NPU 信息 JSON：
+容器内 NPU 信息 JSON，保存到 `.vllm-deploy/container-detection-result.json`：
+
+```bash
+kubectl exec -n ${NAMESPACE} ${POD_NAME} -- bash /scripts/detect-npu.sh > .vllm-deploy/container-detection-result.json
+```
 
 ```json
 {
@@ -50,6 +54,8 @@
   "npu_smi_available": true
 }
 ```
+
+此文件将作为 Phase 10 生成 deploy.sh 的输入，`npu_count` 用于设置 `--tensor-parallel-size`。
 
 ## 异常处理
 
