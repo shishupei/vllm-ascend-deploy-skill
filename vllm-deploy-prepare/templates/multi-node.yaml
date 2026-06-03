@@ -1,6 +1,11 @@
-# 多机分布式部署 - 标准 Kubernetes Deployment
-# 适用于多个节点分布式部署 vLLM 推理服务
+# 多机分布式部署 - 单文件备选模板
+# 包含 Namespace、ConfigMaps、Master/Worker Deployments 和 Service
 # 使用 Ray 作为分布式后端
+#
+# 注意：此模板为单文件备选方案，适用于快速测试或小规模部署。
+# 生产环境推荐使用拆分模板 multi-node-master.yaml + multi-node-worker.yaml，
+# 以获得更灵活的节点分配和 Worker 扩缩容能力。
+# 变量命名与拆分模板保持一致，均可通过 fill-template.sh 填充。
 
 ---
 apiVersion: v1
@@ -9,7 +14,7 @@ metadata:
   name: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     deploy-mode: multi-node
 
 ---
@@ -24,7 +29,7 @@ data:
   MAX_NUM_SEQS: "${MAX_NUM_SEQS}"
   TENSOR_PARALLEL_SIZE: "${TENSOR_PARALLEL_SIZE}"
   WORLD_SIZE: "${WORLD_SIZE}"
-  MASTER_ADDR: "${MASTER_ADDR}"
+  MASTER_ADDR: "${MASTER_NODE_IP}"
   MASTER_PORT: "${MASTER_PORT}"
 
 ---
@@ -44,47 +49,36 @@ data:
         NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
       fi
     done
-    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
-    echo "NPU Count: $NPU_COUNT" >&2
+    DETECTED_NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $DETECTED_NPU_COUNT" >&2
     cat <<EOF
-{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $DETECTED_NPU_COUNT}
 EOF
-  deploy.sh: |
-    #!/bin/bash
-    set -e
-    vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --distributed-executor-backend ray \
-      --port 8000 \
-      --trust-remote-code
 
 ---
 # Master 节点 Deployment (Rank 0)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}-master
+  name: vllm-${MODEL_RESOURCE_NAME}-master
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: master
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
       role: master
-  progressDeadlineSeconds: 1200
+  progressDeadlineSeconds: 1800
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
         role: master
     spec:
       nodeName: ${MASTER_NODE_NAME}
@@ -93,14 +87,17 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - /bin/bash
         - -c
         - |
           # Ray 集群引导 - Master 节点启动 head
-          ray start --head --port=${MASTER_PORT}
-          # 启动 vLLM
-          /scripts/deploy.sh
+          ray start --head --port="${MASTER_PORT}" --node-ip-address="${HCCL_IF_IP}"
+          # 等待用户手动执行 deploy.sh
+          echo "Ray cluster initialized. Waiting for deploy.sh execution..."
+          tail -f /dev/null
         env:
         - name: HF_HUB_OFFLINE
           value: "1"
@@ -125,20 +122,6 @@ spec:
           containerPort: 8000
         - name: ray
           containerPort: ${MASTER_PORT}
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          failureThreshold: 3
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 600
-          periodSeconds: 10
-          failureThreshold: 3
         resources:
           limits:
             cpu: "${CPU_LIMIT}"
@@ -171,7 +154,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -183,11 +166,11 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}-worker-${WORKER_RANK}
+  name: vllm-${MODEL_RESOURCE_NAME}-worker-${WORKER_RANK}
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: worker
     rank: "${WORKER_RANK}"
 spec:
@@ -195,15 +178,15 @@ spec:
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
       role: worker
       rank: "${WORKER_RANK}"
-  progressDeadlineSeconds: 1200
+  progressDeadlineSeconds: 1800
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
         role: worker
         rank: "${WORKER_RANK}"
     spec:
@@ -213,14 +196,17 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - /bin/bash
         - -c
         - |
           # Ray 集群引导 - Worker 节点连接到 head
-          ray start --address=${MASTER_NODE_IP}:${MASTER_PORT}
-          # 启动 vLLM
-          /scripts/deploy.sh
+          ray start --address="${MASTER_NODE_IP}":"${MASTER_PORT}" --node-ip-address="${HCCL_IF_IP}"
+          # 等待用户手动执行 deploy.sh
+          echo "Ray worker connected. Waiting for deploy.sh execution..."
+          tail -f /dev/null
         env:
         - name: HF_HUB_OFFLINE
           value: "1"
@@ -245,13 +231,6 @@ spec:
           containerPort: 8000
         - name: ray
           containerPort: ${MASTER_PORT}
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          failureThreshold: 3
         resources:
           limits:
             cpu: "${CPU_LIMIT}"
@@ -284,7 +263,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -300,7 +279,7 @@ spec:
   type: NodePort
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: master
   ports:
   - name: http
