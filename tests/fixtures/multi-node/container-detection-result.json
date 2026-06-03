@@ -1,0 +1,6 @@
+{
+  "pod_name": "vllm-qwen2-5-7b-master",
+  "npu_devices": ["/dev/davinci0", "/dev/davinci1", "/dev/davinci2", "/dev/davinci3"],
+  "npu_count": 4,
+  "npu_smi_available": true
+}

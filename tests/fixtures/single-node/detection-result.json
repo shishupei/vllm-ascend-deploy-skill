@@ -1,0 +1,13 @@
+{
+  "kubectl_available": true,
+  "cluster_connected": true,
+  "nodes": [
+    {
+      "name": "node-a",
+      "ip": "192.168.1.10",
+      "npu_count": 16,
+      "npu_type": "huawei.com/Ascend910"
+    }
+  ],
+  "recommended_nodes": ["node-a"]
+}

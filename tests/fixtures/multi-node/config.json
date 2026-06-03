@@ -1,0 +1,12 @@
+{
+  "selected_model": "Qwen2.5-7B",
+  "hw_spec": "A3",
+  "deploy_mode": "multi_node",
+  "namespace": "vllm-qwen",
+  "model_path": "/data/models/Qwen2.5-7B",
+  "target_image": "harbor.example.com/library/vllm-ascend:v0.6.0",
+  "max_model_len": 8192,
+  "max_num_seqs": 256,
+  "tensor_parallel_size": 32,
+  "master_port": 29500
+}

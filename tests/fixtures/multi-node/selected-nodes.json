@@ -1,0 +1,15 @@
+{
+  "master_node": "node-a",
+  "nodes": [
+    {
+      "name": "node-a",
+      "ip": "192.168.1.10",
+      "npu_count": 16
+    },
+    {
+      "name": "node-b",
+      "ip": "192.168.1.11",
+      "npu_count": 16
+    }
+  ]
+}

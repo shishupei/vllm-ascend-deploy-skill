@@ -1,0 +1,6 @@
+{
+  "pod_name": "vllm-glm-5",
+  "npu_devices": ["/dev/davinci0", "/dev/davinci1"],
+  "npu_count": 2,
+  "npu_smi_available": true
+}
