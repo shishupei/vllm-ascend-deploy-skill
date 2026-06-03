@@ -1,8 +1,18 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+require_cmd() {
+    local cmd="$1"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: required command '$cmd' not found" >&2
+        exit 1
+    fi
+}
+
+require_cmd jq
 
 CONFIG_FILE="${1:-.vllm-deploy/config.json}"
-CONTAINER_DETECTION_FILE="${2:-.vllm-deploy/container-detection.json}"
+CONTAINER_DETECTION_FILE="${2:-.vllm-deploy/container-detection-result.json}"
 OUTPUT_DIR="${3:-.vllm-deploy/k8s}"
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -11,7 +21,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 if [ ! -f "$CONTAINER_DETECTION_FILE" ]; then
-    echo "Error: container-detection.json not found at $CONTAINER_DETECTION_FILE" >&2
+    echo "Error: container-detection-result.json not found at $CONTAINER_DETECTION_FILE" >&2
     echo "Please run Phase 9 container NPU detection first" >&2
     exit 1
 fi

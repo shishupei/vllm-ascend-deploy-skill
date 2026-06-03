@@ -40,6 +40,10 @@ run_case() {
             .vllm-deploy/detection-result.json \
             .vllm-deploy/selected-nodes.json \
             .vllm-deploy/k8s
+        if [ -f .vllm-deploy/k8s/deploy.sh ]; then
+            echo "deploy.sh must not be generated before Phase 9 container detection" >&2
+            exit 1
+        fi
         bash "$ROOT_DIR/vllm-deploy-execute/scripts/generate-deploy.sh" \
             .vllm-deploy/config.json \
             .vllm-deploy/container-detection-result.json \
