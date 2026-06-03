@@ -37,13 +37,14 @@ if [ ! -f "$K8S_DIR/all.yaml" ]; then
     exit 1
 fi
 
-if rg -n '\$\{[A-Z0-9_]+\}' "$K8S_DIR" >/tmp/vllm-unresolved-vars.txt; then
+# Use grep -rn instead of rg (ripgrep) for portability
+if grep -rn '\$\{[A-Z0-9_]+\}' "$K8S_DIR" >/tmp/vllm-unresolved-vars.txt; then
     echo "Error: generated artifacts contain unresolved template variables:" >&2
     cat /tmp/vllm-unresolved-vars.txt >&2
     exit 1
 fi
 
-if rg -n 'name: .*[^a-z0-9.-]' "$K8S_DIR/all.yaml" >/tmp/vllm-name-lines.txt; then
+if grep -n 'name: .*[^a-z0-9.-]' "$K8S_DIR/all.yaml" >/tmp/vllm-name-lines.txt; then
     while IFS= read -r line; do
         name_value=$(printf '%s' "$line" | sed -E 's/^.*name:[[:space:]]*"?([^"#]+)"?.*$/\1/')
         if ! printf '%s' "$name_value" | grep -Eq '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$'; then
@@ -53,7 +54,7 @@ if rg -n 'name: .*[^a-z0-9.-]' "$K8S_DIR/all.yaml" >/tmp/vllm-name-lines.txt; th
     done </tmp/vllm-name-lines.txt
 fi
 
-if ! rg -n "model: ${RESOURCE_NAME}" "$K8S_DIR/all.yaml" >/dev/null; then
+if ! grep -n "model: ${RESOURCE_NAME}" "$K8S_DIR/all.yaml" >/dev/null; then
     echo "Error: all.yaml does not contain normalized model label: $RESOURCE_NAME" >&2
     exit 1
 fi
