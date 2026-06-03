@@ -1,6 +1,13 @@
 # PD 分离部署 - Kthena CRD 版本
 # 使用 Volcano Kthena 的 ModelServing、ModelServer、ModelRoute
 # 适用于华为昇腾 NPU 环境
+#
+# kv-transfer-config 说明：
+# - kv_port, engine_id, kv_rank 为 vLLM PD 分离固定参数，勿随意修改
+# - Prefill: kv_role=kv_producer, kv_rank=0, kv_port=20001, engine_id=0
+# - Decode:  kv_role=kv_consumer, kv_rank=1, kv_port=20002, engine_id=1
+# - 当前 Kthena 控制面仍固定使用 `mooncake`，`ModelServer.spec.kvConnector.type` 不跟随 ${KV_CONNECTOR} 变化
+# - 运行时 vLLM 参数仍通过 ${KV_CONNECTOR} 传入；若要支持非 Mooncake 连接器，需要先补充 Kthena 侧兼容性约束
 
 ---
 apiVersion: v1
@@ -9,7 +16,7 @@ metadata:
   name: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     deploy-mode: pd-kthena
 
 ---
@@ -17,7 +24,7 @@ metadata:
 apiVersion: workload.serving.volcano.sh/v1alpha1
 kind: ModelServing
 metadata:
-  name: ${MODEL_NAME}
+  name: ${MODEL_RESOURCE_NAME}
   namespace: ${NAMESPACE}
 spec:
   schedulerName: volcano
@@ -97,16 +104,16 @@ spec:
                   - "--trust-remote-code"
                   - "--enforce-eager"
                   - "--kv-transfer-config"
-                  - '{"kv_connector":"MooncakeConnectorV1","kv_buffer_device":"npu","kv_role":"kv_producer","kv_parallel_size":1,"kv_port":"20001","engine_id":"0","kv_rank":0}'
+                  - '{"kv_connector":"${KV_CONNECTOR}","kv_buffer_device":"npu","kv_role":"kv_producer","kv_parallel_size":1,"kv_port":"20001","engine_id":"0","kv_rank":0}'
                 imagePullPolicy: Always
                 resources:
                   limits:
                     cpu: "${CPU_LIMIT}"
-                    memory: ${MEMORY_LIMIT}
+                    memory: "${MEMORY_LIMIT}"
                     ${NPU_RESOURCE_TYPE}: "${PREFILL_NPU_COUNT}"
                   requests:
                     cpu: "${CPU_REQUEST}"
-                    memory: ${MEMORY_LIMIT}
+                    memory: "${MEMORY_REQUEST}"
                     ${NPU_RESOURCE_TYPE}: "${PREFILL_NPU_COUNT}"
                 readinessProbe:
                   initialDelaySeconds: 5
@@ -142,7 +149,7 @@ spec:
                   type: File
               - name: shared-memory-volume
                 emptyDir:
-                  sizeLimit: 256Mi
+                  sizeLimit: ${SHM_SIZE_LIMIT}
                   medium: Memory
 
       # Decode 角色 (KV Consumer)
@@ -202,16 +209,16 @@ spec:
                   - "--no-enable-prefix-caching"
                   - "--enforce-eager"
                   - "--kv-transfer-config"
-                  - '{"kv_connector":"MooncakeConnectorV1","kv_buffer_device":"npu","kv_role":"kv_consumer","kv_parallel_size":1,"kv_port":"20002","engine_id":"1","kv_rank":1}'
+                  - '{"kv_connector":"${KV_CONNECTOR}","kv_buffer_device":"npu","kv_role":"kv_consumer","kv_parallel_size":1,"kv_port":"20002","engine_id":"1","kv_rank":1}'
                 imagePullPolicy: Always
                 resources:
                   limits:
                     cpu: "${CPU_LIMIT}"
-                    memory: ${MEMORY_LIMIT}
+                    memory: "${MEMORY_LIMIT}"
                     ${NPU_RESOURCE_TYPE}: "${DECODE_NPU_COUNT}"
                   requests:
                     cpu: "${CPU_REQUEST}"
-                    memory: ${MEMORY_LIMIT}
+                    memory: "${MEMORY_REQUEST}"
                     ${NPU_RESOURCE_TYPE}: "${DECODE_NPU_COUNT}"
                 readinessProbe:
                   initialDelaySeconds: 5
@@ -247,7 +254,7 @@ spec:
                   type: File
               - name: shared-memory-volume
                 emptyDir:
-                  sizeLimit: 256Mi
+                  sizeLimit: ${SHM_SIZE_LIMIT}
                   medium: Memory
 
 ---
@@ -255,14 +262,14 @@ spec:
 apiVersion: networking.serving.volcano.sh/v1alpha1
 kind: ModelServer
 metadata:
-  name: ${MODEL_NAME}-server
+  name: ${MODEL_RESOURCE_NAME}-server
   namespace: ${NAMESPACE}
 spec:
   kvConnector:
     type: mooncake
   workloadSelector:
     matchLabels:
-      modelserving.volcano.sh/name: ${MODEL_NAME}
+      modelserving.volcano.sh/name: ${MODEL_RESOURCE_NAME}
     pdGroup:
       groupKey: "modelserving.volcano.sh/group-name"
       prefillLabels:
@@ -271,7 +278,7 @@ spec:
         modelserving.volcano.sh/role: decode
   workloadPort:
     port: 8000
-  model: "${MODEL_NAME}"
+  model: "${MODEL_RESOURCE_NAME}"
   inferenceEngine: "vLLM"
   trafficPolicy:
     timeout: 10s
@@ -281,11 +288,11 @@ spec:
 apiVersion: networking.serving.volcano.sh/v1alpha1
 kind: ModelRoute
 metadata:
-  name: ${MODEL_NAME}-route
+  name: ${MODEL_RESOURCE_NAME}-route
   namespace: ${NAMESPACE}
 spec:
   modelName: "${MODEL_NAME}"
   rules:
     - name: "default"
       targetModels:
-        - modelServerName: "${MODEL_NAME}-server"
+        - modelServerName: "${MODEL_RESOURCE_NAME}-server"

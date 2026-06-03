@@ -34,7 +34,11 @@ slugify_k8s_name() {
         | sed -E 's/-+$//'
 }
 
-MODEL_RESOURCE_NAME=$(slugify_k8s_name "$MODEL_NAME")
+export MODEL_RESOURCE_NAME=$(slugify_k8s_name "$MODEL_NAME")
+if [ -z "$MODEL_RESOURCE_NAME" ]; then
+    echo "Error: selected_model '$MODEL_NAME' cannot be converted to a Kubernetes resource name" >&2
+    exit 1
+fi
 
 if [ "$CONTAINER_NPU_COUNT" -le 0 ]; then
     echo "Error: container NPU count is 0 or missing in $CONTAINER_DETECTION_FILE" >&2
