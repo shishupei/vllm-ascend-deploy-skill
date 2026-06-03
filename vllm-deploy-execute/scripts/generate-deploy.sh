@@ -76,6 +76,8 @@ EOF
 elif [ "$DEPLOY_MODE" = "multi_node" ]; then
     cat <<EOF > "$OUTPUT_DIR/deploy.sh"
 #!/bin/bash
+# vLLM 分布式部署脚本（多节点 Master 专用）
+# Worker Pod 只通过容器启动命令加入 Ray 集群，不执行此脚本。
 set -e
 echo "=== Starting vLLM Service (Master) ==="
 vllm serve "${MODEL_PATH}" \

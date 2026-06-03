@@ -2,66 +2,62 @@
 
 ## 目标
 
-根据容器内 NPU 探测结果，生成 Pod 内执行的 vLLM 启动脚本。
+根据容器内 NPU 探测结果生成 Pod 内执行的 vLLM 启动脚本（仅 `single_node` 和 `multi_node` 模式需要）。
+
+`pd_separate` 和 `ha_active_standby` 模式的模板已内嵌启动命令，不需要生成独立的 deploy.sh。
 
 ## 输入
 
 - `.vllm-deploy/config.json` - 用户配置
-- 容器内 NPU 探测结果（Phase 9）
-- Skill 1 生成的启动脚本模板（`.vllm-deploy/scripts/`）
+- `.vllm-deploy/container-detection.json` - Phase 9 容器内 NPU 探测结果
 
-## 脚本选择逻辑
+## 脚本生成逻辑
 
-根据 `deploy_mode` 选择对应的启动脚本：
+执行 `scripts/generate-deploy.sh`，该脚本：
 
-| deploy_mode | 脚本 |
-|-------------|------|
-| `single_node` | `start-single-node.sh` |
-| `multi_node` | Master: `start-multi-node-master.sh`, Worker: `start-multi-node-worker.sh` |
-| `pd_separate` | Prefill: `start-prefill.sh`, Decode: `start-decode.sh` |
+1. 读取 `config.json` 获取 `deploy_mode`、`model_path`、`selected_model`、`max_model_len`、`max_num_seqs`
+2. 读取 `container-detection.json` 获取容器内实际 NPU 数量
+3. 使用容器内探测到的 NPU 数量设置 `--tensor-parallel-size`
+4. 仅在 `single_node` 或 `multi_node` 模式下生成 `deploy.sh`
 
-## 占位符填充
-
-读取 Skill 1 生成的脚本模板，填充探测获得的参数：
-
-### 多节点脚本填充
-
-| 占位符 | 来源 |
-|--------|------|
-| `${NODE_IP_PLACEHOLDER}` | Pod 的 status.podIP |
-| `${WORLD_SIZE_PLACEHOLDER}` | 部署节点数量 |
-| `${MASTER_ADDR_PLACEHOLDER}` | Master Pod IP |
-| `${WORKER_RANK_PLACEHOLDER}` | Pod 的 Rank 标签 |
+| deploy_mode | 是否生成 deploy.sh | tensor-parallel-size 来源 |
+|-------------|---------------------|--------------------------|
+| `single_node` | 生成 | 容器内探测 `npu_count` |
+| `multi_node` | 生成（仅 Master 使用） | 容器内探测 `npu_count` |
+| `pd_separate` | 不生成 | 模板内嵌 |
+| `ha_active_standby` | 不生成 | 模板内嵌 |
 
 ## 输出
 
-生成 `.vllm-deploy/k8s/deploy.sh`：
+仅在 `single_node` 或 `multi_node` 模式下生成 `.vllm-deploy/k8s/deploy.sh`：
 
 ```bash
 #!/bin/bash
 # Pod 内 vLLM 启动脚本
-# 参数已填充
+# tensor-parallel-size 来自容器内 NPU 探测结果
 
-MODEL_PATH="/data/models/GLM-5"
-TENSOR_PARALLEL_SIZE=8
-...
-
-vllm serve "$MODEL_PATH" ...
+vllm serve "${MODEL_PATH}" \
+  --served-model-name "${MODEL_NAME}" \
+  --tensor-parallel-size "${CONTAINER_NPU_COUNT}" \
+  --max-model-len "${MAX_MODEL_LEN}" \
+  --max-num-seqs "${MAX_NUM_SEQS}" \
+  --port 8000 \
+  --trust-remote-code
 ```
 
 ## AI 执行指南
 
-1. 读取 config.json 确定 deploy_mode
-2. 选择对应的启动脚本模板
-3. 填充探测获得的参数
-4. 生成 deploy.sh 到 `.vllm-deploy/k8s/`
-5. 展示脚本内容
-6. 进入 Phase 11
+1. 确认 Phase 9 已完成，`.vllm-deploy/container-detection.json` 存在
+2. 执行 `scripts/generate-deploy.sh .vllm-deploy/config.json .vllm-deploy/container-detection.json .vllm-deploy/k8s`
+3. 展示生成的脚本内容
+4. 进入 Phase 11
 
-## 多节点脚本生成
+## 多节点说明
 
-对于多节点部署，需要为每个 Pod 生成对应的脚本：
-- Master Pod: `deploy-master.sh`
-- Worker Pod 1: `deploy-worker-1.sh`
+多节点模式下，`deploy.sh` 仅在 Master Pod 内执行。Worker Pod 必须已处于 Running 状态并通过 `ray start --address=...` 加入 Ray 集群，之后才能在 Master Pod 执行 deploy.sh。
 
-每个脚本需要填充不同的 Rank 和节点 IP。
+```bash
+# 仅在 Master Pod 执行
+kubectl cp deploy.sh -n <namespace> <master-pod>:/tmp/deploy.sh
+kubectl exec -n <namespace> <master-pod> -- bash /tmp/deploy.sh
+```

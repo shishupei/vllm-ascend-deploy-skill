@@ -51,6 +51,13 @@ run_case() {
         bash "$ROOT_DIR/vllm-deploy-execute/scripts/validate-generated.sh" \
             .vllm-deploy/config.json \
             .vllm-deploy/k8s
+
+        if [ "$case_name" = "multi-node" ]; then
+            if grep -En 'WORKER_PODS|role=worker.*deploy.sh|Worker.*deploy.sh' .vllm-deploy/k8s/README.md; then
+                echo "multi-node README must not instruct Worker Pods to execute deploy.sh" >&2
+                exit 1
+            fi
+        fi
     )
 }
 

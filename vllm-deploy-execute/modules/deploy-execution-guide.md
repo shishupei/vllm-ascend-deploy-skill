@@ -2,60 +2,75 @@
 
 ## 目标
 
-指导用户在 Pod 内执行 vLLM 启动脚本，完成服务部署。
+根据部署模式，指导用户完成 vLLM 服务的最终启动或验证。
 
-## 输入
+## 模式区分
 
-- `.vllm-deploy/k8s/deploy.sh` - 生成的启动脚本
-- Pod 名称列表
+不同部署模式在此阶段的行为不同：
 
-## 用户交互点
+| deploy_mode | 是否有独立 deploy.sh | Pod 启动方式 | Phase 11 操作 |
+|-------------|----------------------|--------------|---------------|
+| `single_node` | 有 | `tail -f /dev/null` 等待手动执行 | 用户需 kubectl cp + kubectl exec deploy.sh |
+| `multi_node` | 有 | `tail -f /dev/null` 等待手动执行 | 仅在 Master Pod 内执行 deploy.sh，Worker 已通过 ray start 加入集群 |
+| `pd_separate` | 无 | 模板内嵌 `vllm serve` 启动命令 | 仅需验证 Pod 就绪和服务可达 |
+| `ha_active_standby` | 无 | 模板内嵌 `vllm serve` 启动命令 | 仅需验证 Pod 就绪和服务可达 |
 
-此阶段需要用户手动在 Pod 内执行脚本，AI 等待用户确认。
+## single_node / multi_node：手动执行 deploy.sh
 
-## AI 执行指南
+对于这两种模式，Pod 使用 `tail -f /dev/null` 等待用户手动执行 deploy.sh。
+在执行 deploy.sh 之前，Pod 一般只能到 `Running`，不会通过 `Ready`。
 
-1. 展示需要执行的 Pod 和对应脚本
-2. 提供执行命令模板
-3. 等待用户确认 vLLM 服务启动成功
+### 单节点
 
-## 指导输出
-
-```
-=== 在 Pod 内执行 vLLM 启动脚本 ===
-
-Pod: vllm-glm5-master-xxx
-执行命令：
-kubectl exec -n vllm-glm5 vllm-glm5-master-xxx -- bash /path/to/deploy.sh
-
-或交互式进入：
-kubectl exec -n vllm-glm5 -it vllm-glm5-master-xxx -- bash
-cd /path/to/scripts
-bash deploy.sh
-
-完成后请回复 "vLLM 服务已启动" 或报告错误日志。
+```bash
+POD_NAME=$(kubectl get pods -n <namespace> -l app=vllm-deploy,model=<model-name> -o jsonpath='{.items[0].metadata.name}')
+kubectl cp deploy.sh -n <namespace> "$POD_NAME":/tmp/deploy.sh
+kubectl exec -n <namespace> "$POD_NAME" -- bash /tmp/deploy.sh
 ```
 
-## 多节点执行顺序
+### 多节点
 
-对于多节点部署，执行顺序：
-1. 先启动 Master Pod 的脚本
-2. 等待 Master 就绪
-3. 再启动各 Worker Pod 的脚本
+仅在 Master Pod 内执行 deploy.sh。Worker Pod 必须已处于 Running 状态并通过 `ray start --address=...` 加入 Ray 集群，之后才能在 Master Pod 执行 deploy.sh。
 
-## PD 分离执行顺序
+```bash
+# Master Pod
+MASTER_POD=$(kubectl get pods -n <namespace> -l app=vllm-deploy,model=<model-name>,role=master -o jsonpath='{.items[0].metadata.name}')
+kubectl cp deploy.sh -n <namespace> "$MASTER_POD":/tmp/deploy.sh
+kubectl exec -n <namespace> "$MASTER_POD" -- bash /tmp/deploy.sh
+```
 
-对于 PD 分离部署：
-1. 先启动 Prefill Pod
-2. 等待 Prefill 就绪
-3. 再启动 Decode Pod
+## pd_separate / ha_active_standby：验证服务就绪
+
+这两种模式的模板已内嵌 `vllm serve` 启动命令，Pod apply 后会直接启动服务。Phase 11 仅需验证：
+
+### PD 分离
+
+1. 检查 Prefill Pod readinessProbe 通过
+2. 检查 Decode Pod readinessProbe 通过
+3. 确认 Prefill 和 Decode 服务均可达
+
+```bash
+kubectl get pods -n <namespace> -w
+# 等所有 Pod 进入 Running 且 Ready
+```
+
+### 主备高可用
+
+1. 检查所有 Pod readinessProbe 通过
+2. 确认至少一个 Pod 的 vLLM 服务可达
+
+```bash
+kubectl get pods -n <namespace> -w
+# 等至少一个 Pod Ready
+```
 
 ## 验证服务
 
-启动成功后，验证：
+启动成功后（无论哪种模式），验证：
+
 ```bash
-curl http://<pod-ip>:8000/health
-curl http://<pod-ip>:8000/v1/models
+curl http://<node-ip>:<node-port>/health
+curl http://<node-ip>:<node-port>/v1/models
 ```
 
 ## 下一步

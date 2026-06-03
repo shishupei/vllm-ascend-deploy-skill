@@ -373,10 +373,11 @@ elif [ "$DEPLOY_MODE" = "multi_node" ]; then
 2. 等待所有 Pod 进入 Running（Master 和 Worker）：
    \`\`\`bash
    kubectl get pods -n ${NAMESPACE} -w
-   # 多节点模式先到 Running 即可；执行 deploy.sh 后相关 Pod 才会逐步变 Ready
+   # 多节点模式先到 Running 即可；Worker Pod 必须已通过 ray start 加入 Ray 集群，
+   # 之后才能在 Master Pod 执行 deploy.sh，相关 Pod 才会逐步变 Ready
    \`\`\`
 
-3. 将 deploy.sh 复制到 Master Pod 内并执行（Worker 已通过 ray start 加入集群，无需执行 deploy.sh）：
+3. 将 deploy.sh 复制到 Master Pod 内并执行（Worker 通过 ray start 自动加入集群，无需单独操作）：
    \`\`\`bash
    # Master Pod
    MASTER_POD=\$(kubectl get pods -n ${NAMESPACE} -l app=vllm-deploy,model=${MODEL_RESOURCE_NAME},role=master -o jsonpath='{.items[0].metadata.name}')
