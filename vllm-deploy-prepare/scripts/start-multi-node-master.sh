@@ -32,7 +32,7 @@ export MASTER_PORT
 
 # ============ Ray 集群引导（Master 作为 Head）============
 echo "Starting Ray cluster as Head node..." >&2
-ray start --head --port=${MASTER_PORT} --node-ip-address=${HCCL_IF_IP}
+ray start --head --port="${MASTER_PORT}" --node-ip-address="${HCCL_IF_IP}"
 
 # 等待 Ray 集群稳定
 sleep 5

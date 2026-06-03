@@ -6,11 +6,11 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}-worker-${WORKER_RANK}
+  name: vllm-${MODEL_RESOURCE_NAME}-worker-${WORKER_RANK}
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: worker
     rank: "${WORKER_RANK}"
 spec:
@@ -18,15 +18,15 @@ spec:
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
       role: worker
       rank: "${WORKER_RANK}"
-  progressDeadlineSeconds: 1200
+  progressDeadlineSeconds: 1800
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
         role: worker
         rank: "${WORKER_RANK}"
     spec:
@@ -36,12 +36,14 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - /bin/bash
         - -c
         - |
           # Ray 集群引导 - Worker 节点连接到 head
-          ray start --address=${MASTER_NODE_IP}:${MASTER_PORT}
+          ray start --address="${MASTER_NODE_IP}":"${MASTER_PORT}" --node-ip-address="${HCCL_IF_IP}"
           # 等待用户手动执行 deploy.sh（Phase 11）
           echo "Ray worker connected. Waiting for deploy.sh execution..."
           tail -f /dev/null
@@ -69,13 +71,6 @@ spec:
           containerPort: 8000
         - name: ray
           containerPort: ${MASTER_PORT}
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          failureThreshold: 3
         resources:
           limits:
             cpu: "${CPU_LIMIT}"
@@ -108,7 +103,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts

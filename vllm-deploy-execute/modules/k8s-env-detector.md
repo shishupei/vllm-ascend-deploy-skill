@@ -53,7 +53,30 @@ bash scripts/detect-k8s-env.sh
    - `pd_separate`: 分别推荐 Prefill 和 Decode 节点
 5. 使用 AskUserQuestion 确认节点选择
 6. 保存探测结果到 `.vllm-deploy/detection-result.json`
-7. 进入 Phase 7（补）
+7. 将确认后的节点选择写入 `.vllm-deploy/selected-nodes.json`
+8. 进入 Phase 7（补）
+
+### 节点选择文件契约
+
+Phase 4 确认节点后，应显式写出 `.vllm-deploy/selected-nodes.json`，供 `fill-template.sh` 消费。
+
+推荐格式：
+
+```json
+{
+  "master_node": "node-1",
+  "nodes": [
+    {"name": "node-1", "ip": "192.168.1.101", "npu_count": 8},
+    {"name": "node-2", "ip": "192.168.1.102", "npu_count": 8}
+  ]
+}
+```
+
+兼容格式：
+
+- `nodes` 也可以只写节点名数组，例如 `["node-1", "node-2"]`
+- `single_node` / `ha_active_standby` 至少需要 1 个节点
+- `multi_node` 需要第 1 个节点作为 Master，其余节点作为 Worker
 
 ## 用户交互
 

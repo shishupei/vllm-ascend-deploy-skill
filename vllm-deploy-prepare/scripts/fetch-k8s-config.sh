@@ -23,21 +23,6 @@ if [ -z "$NPU_RESOURCE" ]; then
     NPU_RESOURCE="huawei.com/Ascend910"
 fi
 
-# 提取 volume mount 路径
-VOLUMES=$(echo "$HTML" | grep -o 'mountPath: [^<]*' | sed 's/mountPath: //' | sort -u)
-
-# 提取 hostPath 路径
-HOSTPATHS=$(echo "$HTML" | grep -o 'path: [^<]*' | sed 's/path: //' | sort -u)
-
-# 提取环境变量
-ENV_VARS=$(echo "$HTML" | grep -oE 'name: [A-Z_]+|value: [^<]*' | paste - - | sed 's/name: //' | sed 's/value: /: /')
-
-# 提取分布式配置参数（PD分离相关）
-KV_CONFIG=$(echo "$HTML" | grep -o '"kv_connector":"[^"]*"' | head -1)
-if [ -z "$KV_CONFIG" ]; then
-    KV_CONFIG='null'
-fi
-
 # 输出 JSON
 cat <<EOF
 {
@@ -71,7 +56,6 @@ cat <<EOF
   "security_context": {
     "privileged": true
   },
-  "host_network": true,
-  "kv_config": $KV_CONFIG
+  "host_network": true
 }
 EOF

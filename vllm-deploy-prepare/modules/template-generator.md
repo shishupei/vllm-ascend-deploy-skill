@@ -14,7 +14,7 @@
 | 模板文件 | 适用部署方式 | 说明 |
 |----------|--------------|------|
 | `single-node.yaml` | 单节点部署 | 标准 Deployment，适合单机推理 |
-| `multi-node.yaml` | 多节点分布式 | Ray 分布式，Master + Worker 模式 |
+| `multi-node-master.yaml` + `multi-node-worker.yaml` | 多节点分布式 | Ray 分布式，Master + Worker 模式 |
 | `pd-separate.yaml` | PD 分离（标准 K8s） | Prefill/Decode 分离，使用 kv-transfer-config |
 | `pd-separate-kthena.yaml` | PD 分离（Kthena） | 使用 Volcano Kthena CRD |
 | `ha-active-standby.yaml` | 主备高可用 | 多副本 + PDB + HPA |
@@ -26,7 +26,7 @@
 | deploy_mode | 使用的模板 |
 |-------------|------------|
 | `single_node` | `single-node.yaml` |
-| `multi_node` | `multi-node.yaml` |
+| `multi_node` | `multi-node-master.yaml` + `multi-node-worker.yaml` |
 | `pd_separate` | `pd-separate.yaml` 或 `pd-separate-kthena.yaml` |
 | `ha_active_standby` | `ha-active-standby.yaml` |
 
@@ -71,7 +71,7 @@ PD 分离有两种部署方式：
 - `${DECODE_TP_SIZE}` - Decode 张量并行大小
 - `${PREFILL_NPU_COUNT}` - Prefill NPU 数量
 - `${DECODE_NPU_COUNT}` - Decode NPU 数量
-- `${KV_CONNECTOR}` - KV 连接器类型
+- `${KV_CONNECTOR}` - KV 连接器类型（标准 PD 模板可配置；Kthena 模板控制面当前固定为 `mooncake`）
 - `${DECODE_MAX_BATCHED_TOKENS}` - Decode 最大 batch tokens
 
 ### 高可用专属占位符
@@ -87,7 +87,9 @@ PD 分离有两种部署方式：
 ├── config.json
 ├── image-info.json
 └── templates/
-    └── <selected-template>.yaml    # 选中的模板文件
+    ├── <selected-template>.yaml    # 选中的模板文件
+    ├── multi-node-master.yaml      # 仅 multi_node
+    └── multi-node-worker.yaml      # 仅 multi_node
 ```
 
 ## AI 执行指南

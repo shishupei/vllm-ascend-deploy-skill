@@ -8,7 +8,7 @@ metadata:
   name: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
 
 ---
 apiVersion: v1
@@ -39,38 +39,40 @@ data:
         NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
       fi
     done
-    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
-    echo "NPU Count: $NPU_COUNT" >&2
+    DETECTED_NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $DETECTED_NPU_COUNT" >&2
     cat <<EOF
-{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $DETECTED_NPU_COUNT}
 EOF
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}
+  name: vllm-${MODEL_RESOURCE_NAME}
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
-  progressDeadlineSeconds: 1200
+      model: ${MODEL_RESOURCE_NAME}
+  progressDeadlineSeconds: 1800
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
     spec:
       containers:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - /bin/bash
         - -c
@@ -92,20 +94,6 @@ spec:
         ports:
         - name: http
           containerPort: 8000
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 30
-          periodSeconds: 10
-          failureThreshold: 3
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 300
-          periodSeconds: 10
-          failureThreshold: 3
         resources:
           limits:
             cpu: "${CPU_LIMIT}"
@@ -138,7 +126,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -154,7 +142,7 @@ spec:
   type: NodePort
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
   ports:
   - name: http
     port: 8000

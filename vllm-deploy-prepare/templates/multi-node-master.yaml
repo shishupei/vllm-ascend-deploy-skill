@@ -9,7 +9,7 @@ metadata:
   name: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     deploy-mode: multi-node
 
 ---
@@ -44,10 +44,10 @@ data:
         NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
       fi
     done
-    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
-    echo "NPU Count: $NPU_COUNT" >&2
+    DETECTED_NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $DETECTED_NPU_COUNT" >&2
     cat <<EOF
-{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $DETECTED_NPU_COUNT}
 EOF
 
 ---
@@ -55,25 +55,25 @@ EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}-master
+  name: vllm-${MODEL_RESOURCE_NAME}-master
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: master
 spec:
   replicas: 1
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
       role: master
-  progressDeadlineSeconds: 1200
+  progressDeadlineSeconds: 1800
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
         role: master
     spec:
       nodeName: ${MASTER_NODE_NAME}
@@ -82,12 +82,14 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - /bin/bash
         - -c
         - |
           # Ray 集群引导 - Master 节点启动 head
-          ray start --head --port=${MASTER_PORT}
+          ray start --head --port="${MASTER_PORT}" --node-ip-address="${HCCL_IF_IP}"
           # 等待用户手动执行 deploy.sh（Phase 11）
           echo "Ray cluster initialized. Waiting for deploy.sh execution..."
           tail -f /dev/null
@@ -115,20 +117,6 @@ spec:
           containerPort: 8000
         - name: ray
           containerPort: ${MASTER_PORT}
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          failureThreshold: 3
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8000
-          initialDelaySeconds: 600
-          periodSeconds: 10
-          failureThreshold: 3
         resources:
           limits:
             cpu: "${CPU_LIMIT}"
@@ -161,7 +149,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -177,7 +165,7 @@ spec:
   type: NodePort
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: master
   ports:
   - name: http

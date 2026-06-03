@@ -1,6 +1,12 @@
 # PD 分离部署 - 标准 Kubernetes Deployment
 # Prefill 和 Decode 节点分离部署
 # 使用 kv-transfer-config 进行 KV Cache 传输
+#
+# kv-transfer-config 说明：
+# - kv_port, engine_id, kv_rank 为 vLLM PD 分离固定参数，勿随意修改
+# - Prefill: kv_role=kv_producer, kv_rank=0, kv_port=20001, engine_id=0
+# - Decode:  kv_role=kv_consumer, kv_rank=1, kv_port=20002, engine_id=1
+# - kv_connector 类型通过 ${KV_CONNECTOR} 配置
 
 ---
 apiVersion: v1
@@ -9,7 +15,7 @@ metadata:
   name: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     deploy-mode: pd-separate
 
 ---
@@ -42,46 +48,36 @@ data:
         NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
       fi
     done
-    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
-    echo "NPU Count: $NPU_COUNT" >&2
+    DETECTED_NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $DETECTED_NPU_COUNT" >&2
     cat <<EOF
-{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $DETECTED_NPU_COUNT}
 EOF
-  deploy.sh: |
-    #!/bin/bash
-    set -e
-    vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --port 8000 \
-      --trust-remote-code
 
 ---
 # Prefill Deployment (KV Producer)
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}-prefill
+  name: vllm-${MODEL_RESOURCE_NAME}-prefill
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: prefill
 spec:
   replicas: ${PREFILL_REPLICAS}
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
       role: prefill
   progressDeadlineSeconds: 1200
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
         role: prefill
     spec:
       hostNetwork: true
@@ -89,6 +85,8 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - vllm
         - serve
@@ -171,7 +169,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -182,25 +180,25 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}-decode
+  name: vllm-${MODEL_RESOURCE_NAME}-decode
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: decode
 spec:
   replicas: ${DECODE_REPLICAS}
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
       role: decode
   progressDeadlineSeconds: 1200
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
         role: decode
     spec:
       hostNetwork: true
@@ -208,6 +206,8 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - vllm
         - serve
@@ -291,7 +291,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -308,7 +308,7 @@ spec:
   type: ClusterIP
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: prefill
   ports:
   - name: http
@@ -325,7 +325,7 @@ spec:
   type: ClusterIP
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: decode
   ports:
   - name: http
@@ -343,7 +343,7 @@ spec:
   type: NodePort
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     role: decode
   ports:
   - name: http

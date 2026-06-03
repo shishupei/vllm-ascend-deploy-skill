@@ -9,7 +9,7 @@ metadata:
   name: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
     deploy-mode: ha-active-standby
 
 ---
@@ -41,31 +41,21 @@ data:
         NPU_DEVICES="$NPU_DEVICES /dev/davinci$i"
       fi
     done
-    NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
-    echo "NPU Count: $NPU_COUNT" >&2
+    DETECTED_NPU_COUNT=$(echo "$NPU_DEVICES" | wc -w)
+    echo "NPU Count: $DETECTED_NPU_COUNT" >&2
     cat <<EOF
-{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $NPU_COUNT}
+{"pod_name": "${HOSTNAME:-unknown}", "npu_count": $DETECTED_NPU_COUNT}
 EOF
-  deploy.sh: |
-    #!/bin/bash
-    set -e
-    vllm serve ${MODEL_PATH} \
-      --served-model-name ${MODEL_NAME} \
-      --tensor-parallel-size ${TENSOR_PARALLEL_SIZE} \
-      --max-model-len ${MAX_MODEL_LEN} \
-      --max-num-seqs ${MAX_NUM_SEQS} \
-      --port 8000 \
-      --trust-remote-code
 
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vllm-${MODEL_NAME}
+  name: vllm-${MODEL_RESOURCE_NAME}
   namespace: ${NAMESPACE}
   labels:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
 spec:
   replicas: ${HA_REPLICAS}
   strategy:
@@ -76,13 +66,13 @@ spec:
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
   progressDeadlineSeconds: 1200
   template:
     metadata:
       labels:
         app: vllm-deploy
-        model: ${MODEL_NAME}
+        model: ${MODEL_RESOURCE_NAME}
     spec:
       affinity:
         # Pod 反亲和性 - 确保副本分布在不同节点
@@ -93,7 +83,7 @@ spec:
                 labelSelector:
                   matchLabels:
                     app: vllm-deploy
-                    model: ${MODEL_NAME}
+                    model: ${MODEL_RESOURCE_NAME}
                 topologyKey: kubernetes.io/hostname
         # 节点亲和性 - 优先选择有 NPU 的节点
         nodeAffinity:
@@ -106,6 +96,8 @@ spec:
       - name: vllm
         image: ${IMAGE}
         imagePullPolicy: IfNotPresent
+        securityContext:
+          privileged: true
         command:
         - vllm
         - serve
@@ -180,7 +172,7 @@ spec:
       - name: shared-memory
         emptyDir:
           medium: Memory
-          sizeLimit: 256Mi
+          sizeLimit: ${SHM_SIZE_LIMIT}
       - name: vllm-scripts
         configMap:
           name: vllm-scripts
@@ -192,14 +184,14 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: vllm-${MODEL_NAME}-pdb
+  name: vllm-${MODEL_RESOURCE_NAME}-pdb
   namespace: ${NAMESPACE}
 spec:
   minAvailable: 1
   selector:
     matchLabels:
       app: vllm-deploy
-      model: ${MODEL_NAME}
+      model: ${MODEL_RESOURCE_NAME}
 
 ---
 # Service - 负载均衡到健康的 Pod
@@ -212,7 +204,7 @@ spec:
   type: NodePort
   selector:
     app: vllm-deploy
-    model: ${MODEL_NAME}
+    model: ${MODEL_RESOURCE_NAME}
   ports:
   - name: http
     port: 8000
@@ -224,13 +216,13 @@ spec:
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
-  name: vllm-${MODEL_NAME}-hpa
+  name: vllm-${MODEL_RESOURCE_NAME}-hpa
   namespace: ${NAMESPACE}
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: vllm-${MODEL_NAME}
+    name: vllm-${MODEL_RESOURCE_NAME}
   minReplicas: ${HA_MIN_REPLICAS}
   maxReplicas: ${HA_MAX_REPLICAS}
   metrics:
