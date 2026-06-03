@@ -2,21 +2,20 @@
 # K8s 环境探测脚本
 # 检测 kubectl 可用性、集群连接、节点 NPU 信息
 
-set -e
+set -euo pipefail
 
-echo "=== K8s Environment Detection ===" >&2
-
-# 检查 kubectl
-if ! command -v kubectl &> /dev/null; then
-    cat <<EOF
-{
-  "cluster_connected": false,
-  "error": "kubectl not found",
-  "message": "Please install kubectl: apt install kubectl or download from https://kubernetes.io/docs/tasks/tools/"
-}
-EOF
+# 检查必需命令
+if ! command -v kubectl >/dev/null 2>&1; then
+    echo "Error: required command 'kubectl' not found" >&2
     exit 1
 fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: required command 'jq' not found" >&2
+    exit 1
+fi
+
+echo "=== K8s Environment Detection ===" >&2
 
 # 检查 kubeconfig
 if ! kubectl config view --minify &> /dev/null; then
@@ -63,7 +62,7 @@ for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); d
     NPU_COUNT=0
 
     for npu_type in $NPU_RESOURCE_TYPES; do
-        count=$(kubectl get node "$node_name" -o json | jq -r ".status.allocatable.\"$npu_type\"" 2>/dev/null || echo "0")
+        count=$(kubectl get node "$node_name" -o json | jq -r --arg npu_type "$npu_type" '.status.allocatable[$npu_type]' 2>/dev/null || echo "0")
         if [ "$count" != "null" ] && [ "$count" != "0" ] && [ -n "$count" ]; then
             NPU_TYPE="$npu_type"
             NPU_COUNT="$count"
@@ -87,9 +86,8 @@ for node_name in $(kubectl get nodes -o jsonpath='{.items[*].metadata.name}'); d
         }' >> "$TEMP_NODES_FILE"
 done
 
-# 使用 jq 合并所有节点为数组
+# 使用 jq 合并所有节点为数组（trap EXIT 会清理临时文件）
 NODE_LIST=$(jq -s '.' "$TEMP_NODES_FILE")
-rm "$TEMP_NODES_FILE"
 
 # 推荐节点（按 NPU 数量排序）
 RECOMMENDED=$(echo "$NODE_LIST" | jq -r '[.[] | select(.npu_count > 0)] | sort_by(-.npu_count) | .[].name' 2>/dev/null || echo "")

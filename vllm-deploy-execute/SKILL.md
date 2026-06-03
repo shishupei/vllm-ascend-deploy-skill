@@ -10,6 +10,8 @@ vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
 - 已运行 `/vllm-deploy-prepare` 并生成 `.vllm-deploy/` 目录
 - `kubectl` 已安装并有集群管理权限
 - kubeconfig 已正确配置
+- `jq` 已安装
+- `envsubst` 已安装（通常来自 gettext 包）
 
 ## 触发方式
 
@@ -47,7 +49,6 @@ vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
 - `all.yaml` - 合并的 K8s 资源清单（Namespace、ConfigMap、Deployment、Service）
 - `master.yaml` - 仅多节点模式：Master 节点清单
 - `worker-*.yaml` - 仅多节点模式：Worker 节点清单（按节点编号）
-- `scripts-configmap.yaml` - Pod 内脚本 ConfigMap（detect-npu.sh、deploy.sh）
 - `apply-all.sh` - 一键部署脚本
 - `README.md` - 部署指南
 
@@ -56,7 +57,7 @@ vLLM-Ascend 部署执行阶段，在 K8s 管理节点执行。
 
 ## 用户确认点
 
-| 认点 | 用户操作 |
+| 确认点 | 用户操作 |
 |--------|---------|
 | Phase 4 结束 | 确认节点选择 |
 | Phase 8 结束 | 执行 `bash apply-all.sh` |

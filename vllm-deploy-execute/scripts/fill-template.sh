@@ -3,13 +3,18 @@
 # 读取模板文件，填充占位符，生成最终 YAML
 # 使用 envsubst 进行安全模板填充，避免 sed 注入风险
 
-set -e
+set -euo pipefail
 
-if ! command -v envsubst >/dev/null 2>&1; then
-    echo "Error: envsubst is required but not installed." >&2
-    echo "Install it with: apt-get install gettext  or  yum install gettext" >&2
-    exit 1
-fi
+require_cmd() {
+    local cmd="$1"
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "Error: required command '$cmd' not found" >&2
+        exit 1
+    fi
+}
+
+require_cmd jq
+require_cmd envsubst
 
 # 参数检查 - 支持新旧两种契约
 # 新契约（4参数）：CONFIG, DETECTION, NODES_FILE, OUTPUT_DIR

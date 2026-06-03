@@ -2,7 +2,12 @@
 # 容器内 NPU 环境探测脚本
 # 在 Pod 内执行，检测 NPU 设备映射
 
-set -e
+set -euo pipefail
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: required command 'jq' not found" >&2
+    exit 1
+fi
 
 echo "=== Container NPU Detection ===" >&2
 
@@ -38,15 +43,15 @@ if command -v npu-smi &> /dev/null; then
     npu-smi info 2>/dev/null >&2 || echo "npu-smi info failed" >&2
 fi
 
-# 输出 JSON
-cat <<EOF
-{
-  "pod_name": "${HOSTNAME:-unknown}",
-  "npu_devices": [$(echo "$NPU_DEVICES" | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//')],
-  "npu_count": $NPU_COUNT,
-  "npu_smi_available": $NPU_SMI_AVAILABLE
-}
-EOF
+# 输出 JSON（使用 jq 安全构建）
+NPU_DEVICES_JSON=$(echo "$NPU_DEVICES" | jq -R -s 'split("\n") | map(select(length > 0))')
+
+jq -n \
+    --arg pod_name "${HOSTNAME:-unknown}" \
+    --argjson devices "$NPU_DEVICES_JSON" \
+    --argjson count "$NPU_COUNT" \
+    --argjson smi "$NPU_SMI_AVAILABLE" \
+    '{pod_name: $pod_name, npu_devices: $devices, npu_count: $count, npu_smi_available: $smi}'
 
 echo "" >&2
 echo "=== Detection Complete ===" >&2
